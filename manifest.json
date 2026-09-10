@@ -1,0 +1,16 @@
+{
+  "apiVersion": 5,
+  "id": "email",
+  "name": "Email",
+  "version": "2.0.0",
+  "description": "Built-in email client. Gmail and Microsoft accounts are signed in once in Settings \u2192 Accounts (shared with Calendar); generic SMTP/IMAP (PureMail) mailboxes are added here. Left-sidebar account/folder list, right-sidebar message preview, and a full workspace page to read, sync and compose.",
+  "author": [
+    "Yanik"
+  ],
+  "authorUrl": [
+    "https://github.com/yanik02"
+  ],
+  "isDesktopOnly": true,
+  "minAppVersion": "0.1.0",
+  "enabled": true
+}

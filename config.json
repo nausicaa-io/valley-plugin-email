@@ -1,0 +1,501 @@
+{
+  "icon": "mail",
+  "keepTabIcon": true,
+  "main": "runtime/index.js",
+  "uiSlots": {
+    "left_sidebar": "email.panel",
+    "right_sidebar": "email.preview",
+    "main_workspace": "email.page"
+  },
+  "slotDefaults": {
+    "left_sidebar": {
+      "order": 50
+    },
+    "right_sidebar": {
+      "order": 80,
+      "side": "hidden"
+    }
+  },
+  "settingsView": "email.settings",
+  "drivers": [],
+  "datasets": [
+    {
+      "id": "messages",
+      "store": "cache",
+      "version": 1,
+      "title": "Messages",
+      "primaryKey": [
+        "id"
+      ],
+      "columns": {
+        "id": {
+          "type": "text"
+        },
+        "accountId": {
+          "type": "text"
+        },
+        "messageId": {
+          "type": "text"
+        },
+        "from": {
+          "type": "text"
+        },
+        "replyTo": {
+          "type": "text",
+          "nullable": true
+        },
+        "to": {
+          "type": "text"
+        },
+        "cc": {
+          "type": "text",
+          "nullable": true
+        },
+        "subject": {
+          "type": "text"
+        },
+        "date": {
+          "type": "datetime"
+        },
+        "snippet": {
+          "type": "text"
+        },
+        "text": {
+          "type": "text",
+          "nullable": true
+        },
+        "html": {
+          "type": "text",
+          "nullable": true
+        },
+        "hasAttachments": {
+          "type": "boolean"
+        }
+      },
+      "indexes": [
+        {
+          "id": "account_message",
+          "columns": [
+            "accountId",
+            "messageId"
+          ],
+          "unique": true
+        },
+        {
+          "id": "date",
+          "columns": [
+            "date"
+          ]
+        },
+        {
+          "id": "messages_fts",
+          "columns": [
+            "subject",
+            "snippet",
+            "text"
+          ],
+          "kind": "fts5"
+        }
+      ],
+      "visibility": "shared",
+      "sensitivity": "sensitive",
+      "titleKey": "auto.f1702b468627"
+    },
+    {
+      "id": "mailboxes",
+      "store": "cache",
+      "version": 1,
+      "title": "Mailboxes",
+      "primaryKey": [
+        "accountId",
+        "path"
+      ],
+      "columns": {
+        "accountId": {
+          "type": "text"
+        },
+        "path": {
+          "type": "text"
+        },
+        "name": {
+          "type": "text"
+        },
+        "delimiter": {
+          "type": "text",
+          "nullable": true
+        },
+        "specialUse": {
+          "type": "text",
+          "nullable": true
+        },
+        "selectable": {
+          "type": "boolean"
+        }
+      },
+      "titleKey": "auto.f4de32abfe19"
+    },
+    {
+      "id": "folder_messages",
+      "store": "cache",
+      "version": 1,
+      "title": "Folder membership",
+      "primaryKey": [
+        "accountId",
+        "folder",
+        "uid"
+      ],
+      "columns": {
+        "accountId": {
+          "type": "text"
+        },
+        "folder": {
+          "type": "text"
+        },
+        "uid": {
+          "type": "integer"
+        },
+        "messageId": {
+          "type": "text"
+        },
+        "flags": {
+          "type": "json"
+        }
+      },
+      "indexes": [
+        {
+          "id": "message",
+          "columns": [
+            "accountId",
+            "messageId"
+          ]
+        }
+      ],
+      "titleKey": "auto.6740906a49df"
+    },
+    {
+      "id": "recipients",
+      "store": "cache",
+      "version": 1,
+      "title": "Recipients",
+      "primaryKey": [
+        "messageId",
+        "kind",
+        "position"
+      ],
+      "columns": {
+        "messageId": {
+          "type": "text"
+        },
+        "kind": {
+          "type": "text",
+          "enum": [
+            "to",
+            "cc",
+            "bcc"
+          ]
+        },
+        "position": {
+          "type": "integer"
+        },
+        "address": {
+          "type": "text"
+        }
+      },
+      "titleKey": "auto.78cbf8eb1d8f"
+    },
+    {
+      "id": "attachments",
+      "store": "cache",
+      "version": 1,
+      "title": "Attachment metadata",
+      "primaryKey": [
+        "messageId",
+        "position"
+      ],
+      "columns": {
+        "messageId": {
+          "type": "text"
+        },
+        "position": {
+          "type": "integer"
+        },
+        "filename": {
+          "type": "text"
+        },
+        "contentType": {
+          "type": "text",
+          "nullable": true
+        },
+        "size": {
+          "type": "integer",
+          "nullable": true
+        },
+        "filePath": {
+          "type": "text",
+          "nullable": true
+        }
+      },
+      "titleKey": "auto.3553cb747ca8"
+    },
+    {
+      "id": "sync_state",
+      "store": "cache",
+      "version": 1,
+      "title": "Mail sync state",
+      "primaryKey": [
+        "accountId",
+        "folder"
+      ],
+      "columns": {
+        "accountId": {
+          "type": "text"
+        },
+        "folder": {
+          "type": "text"
+        },
+        "uidValidity": {
+          "type": "integer",
+          "nullable": true
+        },
+        "cursor": {
+          "type": "text",
+          "nullable": true
+        },
+        "lastSyncAt": {
+          "type": "datetime",
+          "nullable": true
+        }
+      },
+      "titleKey": "auto.77ccbffa13b7"
+    }
+  ],
+  "storageInventory": [
+    {
+      "id": "attachment-files",
+      "kind": "attachments",
+      "store": "cache"
+    }
+  ],
+  "provides": [
+    {
+      "id": "agent.toolProvider",
+      "kind": "service",
+      "version": "1.0.0"
+    },
+    {
+      "id": "metadataPanel.segment",
+      "kind": "extension",
+      "version": "1.0.0"
+    },
+    {
+      "id": "workspace.surface",
+      "kind": "extension",
+      "version": "1.0.0"
+    }
+  ],
+  "guardPresets": {
+    "schemaVersion": 1,
+    "defaultPreset": "recommended",
+    "presets": [
+      {
+        "id": "recommended",
+        "label": "Recommended",
+        "version": 1,
+        "description": "Reading the inbox asks first; sending always confirms.",
+        "entries": {
+          "commands": {
+            "compose": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "sync": {
+              "decision": "allow"
+            },
+            "open-mailbox": {
+              "decision": "allow"
+            }
+          },
+          "tools": {
+            "list_mail_accounts": {
+              "decision": "allow"
+            },
+            "list_mail_folders": {
+              "decision": "allow"
+            },
+            "read_inbox": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "search_email_messages": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "read_mail_message": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "update_email_message": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "compose_email": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "reply_to_email": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            },
+            "forward_email": {
+              "decision": "confirm",
+              "allowPreApproval": false
+            }
+          }
+        }
+      },
+      {
+        "id": "read-only",
+        "label": "Read-only",
+        "version": 1,
+        "description": "Read mail; never send.",
+        "entries": {
+          "commands": {
+            "compose": {
+              "decision": "deny"
+            }
+          },
+          "tools": {
+            "list_mail_accounts": {
+              "decision": "allow"
+            },
+            "list_mail_folders": {
+              "decision": "allow"
+            },
+            "read_inbox": {
+              "decision": "allow"
+            },
+            "search_email_messages": {
+              "decision": "allow"
+            },
+            "read_mail_message": {
+              "decision": "allow"
+            },
+            "update_email_message": {
+              "decision": "deny"
+            },
+            "compose_email": {
+              "decision": "deny"
+            },
+            "reply_to_email": {
+              "decision": "deny"
+            },
+            "forward_email": {
+              "decision": "deny"
+            }
+          }
+        }
+      },
+      {
+        "id": "blocked",
+        "label": "Blocked",
+        "version": 1,
+        "description": "No email actions at all.",
+        "entries": {
+          "commands": {
+            "compose": {
+              "decision": "deny"
+            },
+            "sync": {
+              "decision": "deny"
+            },
+            "open-mailbox": {
+              "decision": "deny"
+            }
+          },
+          "tools": {
+            "list_mail_accounts": {
+              "decision": "deny"
+            },
+            "list_mail_folders": {
+              "decision": "deny"
+            },
+            "read_inbox": {
+              "decision": "deny"
+            },
+            "search_email_messages": {
+              "decision": "deny"
+            },
+            "read_mail_message": {
+              "decision": "deny"
+            },
+            "update_email_message": {
+              "decision": "deny"
+            },
+            "compose_email": {
+              "decision": "deny"
+            },
+            "reply_to_email": {
+              "decision": "deny"
+            },
+            "forward_email": {
+              "decision": "deny"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "settingsSchema": {
+    "fields": [
+      {
+        "key": "syncLimit",
+        "label": "Messages per sync",
+        "labelKey": "plugin.email.field.perSync",
+        "type": "number",
+        "default": 50,
+        "description": "How many recent messages to fetch from a folder on each sync (max 500).",
+        "descriptionKey": "auto.62e474963a01"
+      }
+    ]
+  },
+  "consumes": [
+    {
+      "id": "contacts.directory",
+      "kind": "service",
+      "range": "^1.0.0",
+      "optional": true
+    },
+    {
+      "id": "contacts.directoryRevision",
+      "kind": "state",
+      "range": "^1.0.0",
+      "optional": true
+    }
+  ],
+  "locales": {
+    "en": "runtime/locales/en.json",
+    "de": "runtime/locales/de.json",
+    "es": "runtime/locales/es.json",
+    "fr": "runtime/locales/fr.json",
+    "zh-CN": "runtime/locales/zh-CN.json"
+  },
+  "runtime": {
+    "ui": "runtime/index.js",
+    "backend": "runtime/backend.js"
+  },
+  "permissions": {
+    "network": {
+      "hosts": [
+        "imap.gmail.com",
+        "smtp.gmail.com",
+        "outlook.office365.com",
+        "smtp.office365.com"
+      ],
+      "allowUserEndpoints": true
+    },
+    "accounts": [
+      "mail"
+    ],
+    "credentials": true
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "email": [
+    {
+      "id": "recent",
+      "label": "Recent messages",
+      "labelKey": "markdown.examples.recent",
+      "code": "limit: 5"
+    },
+    {
+      "id": "unread",
+      "label": "Unread messages",
+      "labelKey": "markdown.examples.unread",
+      "code": "unread: true\nlimit: 10"
+    },
+    {
+      "id": "sender",
+      "label": "Filter by sender",
+      "labelKey": "markdown.examples.sender",
+      "code": "from: example.com\nlimit: 5"
+    },
+    {
+      "id": "subject",
+      "label": "Filter by subject",
+      "labelKey": "markdown.examples.subject",
+      "code": "subject: design\nlimit: 5"
+    }
+  ]
+}
