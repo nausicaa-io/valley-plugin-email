@@ -245,15 +245,18 @@ describe('Email mailbox', () => {
     const cancelled = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
     const animation = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { scheduled = callback; return 1 })
     const disconnect = vi.fn()
-    vi.stubGlobal('ResizeObserver', class {
+    const controllerObserver = vi.fn(function () { return { observe() {}, disconnect() {} } })
+    vi.stubGlobal('ResizeObserver', controllerObserver)
+    class FrameObserver {
       constructor(callback: ResizeObserverCallback) { resized = callback }
       observe = vi.fn()
       disconnect = disconnect
-    })
+    }
     try {
       const { container, rerender, unmount } = render(<MessageBody message={{ ...message, html: '<p>Long survey</p><img src="https://example.com/slow.png">' }} />)
       const frame = container.querySelector('iframe')!
       const doc = frame.contentDocument!
+      Object.defineProperty(doc.defaultView, 'ResizeObserver', { value: FrameObserver })
       Object.defineProperty(doc, 'URL', { configurable: true, value: 'about:srcdoc' })
       Object.defineProperty(doc, 'readyState', { configurable: true, value: 'interactive' })
       doc.body.style.margin = '0'
@@ -261,6 +264,7 @@ describe('Email mailbox', () => {
       vi.spyOn(doc.body, 'getBoundingClientRect').mockImplementation(() => ({ top: 0, height: bodyHeight }) as DOMRect)
       act(() => { scheduled!(0) })
       expect(frame.style.height).toBe('1800px')
+      expect(controllerObserver).not.toHaveBeenCalled()
       bodyHeight = 2400
       act(() => { resized!([], {} as ResizeObserver); scheduled!(0) })
       expect(frame.style.height).toBe('2400px')

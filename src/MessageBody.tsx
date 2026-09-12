@@ -103,11 +103,12 @@ export const MessageBody: React.FC<{ message: EmailMessageDetail; plain?: boolea
       doc.addEventListener('keydown', activate)
       doc.addEventListener('load', resize, true)
       doc.addEventListener('error', resize, true)
-      const observer = new ResizeObserver(resize)
-      observer.observe(doc.body)
+      const Observer = (doc.defaultView as typeof window | null)?.ResizeObserver ?? globalThis.ResizeObserver
+      const observer = Observer ? new Observer(resize) : null
+      observer?.observe(doc.body)
       measure()
       disconnect = () => {
-        observer.disconnect()
+        observer?.disconnect()
         doc.removeEventListener('click', activate)
         doc.removeEventListener('keydown', activate)
         doc.removeEventListener('load', resize, true)
