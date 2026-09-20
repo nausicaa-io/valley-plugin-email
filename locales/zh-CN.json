@@ -198,6 +198,10 @@
   "email.backend.operation": "不支持的邮件数据操作",
   "email.backend.accountsInvalid": "已保存的邮件账户无效",
   "email.backend.accountsChanged": "邮件账户已更改。请重新加载后重试。",
+  "email.backend.busy": "邮件正忙。请等待当前请求完成后重试。",
+  "email.backend.stopped": "邮件已停止，此请求尚未开始。",
+  "email.backend.sentCacheFailed": "邮件已发送，但无法保存本地副本。请勿重新发送。",
+  "email.backend.actionCacheFailed": "邮件服务器已接受操作，但无法更新本地缓存。请同步以刷新邮箱。",
   "email.backend.archive": "归档",
   "email.backend.junk": "垃圾邮件",
   "email.backend.trash": "已删除",
@@ -235,5 +239,9 @@
   "email.agentError.string": "{{value}} 必须为字符串。",
   "email.agentError.boolean": "{{value}} 必须为布尔值。",
   "email.agentError.integer": "{{value}} 必须为文档指定范围内的整数。",
-  "email.agentError.unsupported": "不支持的 {{field}}：{{value}}"
+  "email.agentError.unsupported": "不支持的 {{field}}：{{value}}",
+  "email.draftsDataset": "邮件草稿",
+  "email.draftInvalid": "保存的草稿无效，已保留原样。",
+  "email.draftConflict": "此草稿已在其他位置更改。你的编辑已保留在此窗口；为保护已保存的草稿，保存和丢弃操作已暂停。",
+  "email.draftUncertain": "邮件可能已发送。再次主动发送此草稿前，请先检查已发送邮件。"
 }

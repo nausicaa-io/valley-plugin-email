@@ -33,6 +33,44 @@ export async function queryAll(scope: EmailStoreContext, dataset: string, where?
   return rows
 }
 
+function flagProjection(flags: readonly string[]) {
+  return { unread: !flags.includes('\\Seen'), flagged: flags.includes('\\Flagged') }
+}
+
+const projecting = new WeakMap<PluginDataApi, Map<string, Promise<void>>>()
+
+export async function ensureMembershipFlags(scope: EmailStoreContext, accountId: string): Promise<void> {
+  let pending = projecting.get(scope.data)
+  if (!pending) { pending = new Map(); projecting.set(scope.data, pending) }
+  const existing = pending.get(accountId)
+  if (existing) return existing
+  const missing = (column: 'unread' | 'flagged') => scope.data.dataset(scope.datasets.folderMessages).query({
+    where: { accountId, [column]: { isNull: true } },
+    select: ['accountId', 'folder', 'uid', 'flags'], limit: 1000
+  })
+  const rebuild = async () => {
+    let conflicts = 0
+    while (true) {
+      let page = await missing('unread')
+      if (!page.rows.length) page = await missing('flagged')
+      if (!page.rows.length) return
+      try {
+        await scope.data.transaction(page.rows.map(row => ({
+          operation: 'update', dataset: scope.datasets.folderMessages,
+          key: { accountId, folder: String(row.folder), uid: Number(row.uid) },
+          values: flagProjection(Array.isArray(row.flags) ? row.flags.filter((flag): flag is string => typeof flag === 'string') : [])
+        })), { expected: [{ dataset: scope.datasets.folderMessages, revision: page.revision }] })
+        conflicts = 0
+      } catch (error) {
+        if (!error || (error as { code?: string }).code !== 'conflict' || ++conflicts >= 3) throw error
+      }
+    }
+  }
+  const task = rebuild().finally(() => { if (pending.get(accountId) === task) pending.delete(accountId) })
+  pending.set(accountId, task)
+  return task
+}
+
 function cachedId(accountId: string, messageId: string): string {
   return encodeText(JSON.stringify([accountId, messageId]))
 }
@@ -76,7 +114,7 @@ function folderOperations(
     ...[...after.values()].filter((message) => {
       const existing = before.get(message.uid)
       return !existing || existing.messageId !== message.messageId || JSON.stringify(existing.flags) !== JSON.stringify(message.flags)
-    }).map((message) => ({ dataset: scope.datasets.folderMessages, operation: 'upsert' as const, values: { accountId, folder, uid: message.uid, messageId: cachedId(accountId, message.messageId), flags: message.flags } }))
+    }).map((message) => ({ dataset: scope.datasets.folderMessages, operation: 'upsert' as const, values: { accountId, folder, uid: message.uid, messageId: cachedId(accountId, message.messageId), flags: message.flags, ...flagProjection(message.flags) } }))
   ]
 }
 

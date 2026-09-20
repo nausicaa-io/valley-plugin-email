@@ -11,12 +11,13 @@ import { initLocalization } from './localization'
 import { emailAgentTools, registerEmailAgentCommands } from './agentTools'
 import { registerEmailSurfaces } from './surfaces'
 
-export function register(api: ValleyPluginApi): () => void {
+export function register(api: ValleyPluginApi): () => Promise<void> {
   initLocalization(api)
   initRuntime(api)
   const disposeStyles = injectStyles()
   // Instantiate the window-anchored store eagerly so account state loads.
-  getStore()
+  const store = getStore(api)
+  const offFlush = api.runtime.onBeforeUnload(() => store.flushDraft())
   const offCommands = registerEmailAgentCommands(api)
   const offSurfaces = registerEmailSurfaces(api)
 
@@ -30,7 +31,7 @@ export function register(api: ValleyPluginApi): () => void {
     label: 'Email: Compose', labelKey: 'auto.0a3f4e087378',
     sideEffect: 'read',
     run: () => {
-      getStore().startCompose()
+      getStore(api).startCompose()
       api.workspace.openMainTab()
       return undefined
     }
@@ -49,7 +50,7 @@ export function register(api: ValleyPluginApi): () => void {
     label: 'Email: Sync folder', labelKey: 'auto.03820524c5cb',
     sideEffect: 'write',
     run: async () => {
-      await getStore().sync()
+      await getStore(api).sync()
       return { value: undefined, revert: null }
     }
   })
@@ -57,6 +58,7 @@ export function register(api: ValleyPluginApi): () => void {
   const offAgentTools = api.interop.services.provide(AGENT_TOOL_PROVIDER_V1, emailAgentTools(api))
 
   return () => {
+    offFlush()
     offCompose()
     offOpen()
     offSync()
@@ -64,8 +66,9 @@ export function register(api: ValleyPluginApi): () => void {
     offAgentTools()
     offCommands()
     offSurfaces()
-    disposeStore()
+    const drained = disposeStore(api)
     disposeStyles()
+    return drained
   }
 }
 

@@ -1,10 +1,11 @@
-import { t, setTranslator } from './localization'
+import { createTranslator, setTranslator } from './localization'
 import { z } from 'zod'
 import type { PluginDataApi } from '@valley/plugin-sdk'
 import type { EmailAccount, CachedMessage } from '../mailTypes'
 import { cacheMailboxes, cachedMailboxes, parseEmailAddresses, queryMessages, readMessage } from './query'
 import { readAccounts as readEmailAccounts, upsertAccount, getAccount as getEmailAccount, removeAccountFiles, readFolder, mergeFolder, appendMessage, folderCacheStats, updateMessageFlags, moveCachedMessage, emailStoreContext, type EmailStoreContext } from './cache'
 import { accountEndpoint, credentialName, MAIL_CREDENTIAL_STORE, verifyImap, listFolders, fetchFolder, sendMail, applyMessageAction as applyRemoteMessageAction, type MailTransportApi } from './transport'
+import { createMailWorkQueue } from './workQueue'
 
 interface MailRpc {
   handle(name: string, handler: (payload: unknown) => Promise<unknown>): () => void
@@ -12,7 +13,11 @@ interface MailRpc {
 }
 
 export interface MailBackendApi extends MailTransportApi { data: PluginDataApi; rpc: MailRpc; i18n?: { t(key: string, params?: Record<string, string | number>): string } }
-interface MailBackendContext extends EmailStoreContext, MailTransportApi { rpc: MailRpc }
+interface MailBackendContext extends EmailStoreContext, MailTransportApi { rpc: MailRpc; t: ReturnType<typeof createTranslator> }
+
+class RemoteMailCacheError extends Error {
+  constructor(message: string, readonly result: unknown) { super(message) }
+}
 
 const hostSchema = z.object({ host: z.string().min(1), port: z.number().int().positive(), secure: z.boolean() })
 
@@ -111,7 +116,7 @@ const methods = {
 
   listFolders: mailMethod(z.object({ accountId: z.string().min(1) }), async (scope, payload) => {
       const account = await resolveAccount(scope, payload.accountId)
-      if (!account) throw new Error(t('email.backend.account'))
+      if (!account) throw new Error(scope.t('email.backend.account'))
       let listed
       try {
         listed = await listFolders(scope, account)
@@ -137,7 +142,7 @@ const methods = {
     }), async (scope, payload) => {
       const p = payload
       const account = await resolveAccount(scope, p.accountId)
-      if (!account) throw new Error(t('email.backend.account'))
+      if (!account) throw new Error(scope.t('email.backend.account'))
       scope.rpc.emit('sync', { accountId: p.accountId, folder: p.folder, status: 'start' })
       try {
         const messages = await fetchFolder(scope, account, p.folder, p.limit)
@@ -178,7 +183,7 @@ const methods = {
     }), async (scope, payload) => {
       const p = payload
       const account = await resolveAccount(scope, p.accountId)
-      if (!account) throw new Error(t('email.backend.account'))
+      if (!account) throw new Error(scope.t('email.backend.account'))
       const messageId = await sendMail(scope, account, p)
       const sent: CachedMessage = {
         uid: Date.now(),
@@ -194,7 +199,8 @@ const methods = {
         flags: ['\\Seen'],
         hasAttachments: false
       }
-      await appendMessage(scope, p.accountId, 'Sent', sent)
+      try { await appendMessage(scope, p.accountId, 'Sent', sent) }
+      catch { throw new RemoteMailCacheError(scope.t('email.backend.sentCacheFailed'), { messageId }) }
       return { messageId }
     }),
 
@@ -205,30 +211,34 @@ const methods = {
       action: z.enum(['mark-read', 'mark-unread', 'flag', 'unflag', 'archive', 'trash', 'junk'])
     }), async (scope, payload) => {
       const account = await resolveAccount(scope, payload.accountId)
-      if (!account) throw new Error(t('email.backend.account'))
+      if (!account) throw new Error(scope.t('email.backend.account'))
       const remote = await applyRemoteMessageAction(scope, account, payload.folder, payload.uid, payload.action)
       let messages: CachedMessage[]
-      if (remote.destinationFolder) {
-        messages = await moveCachedMessage(
-          scope,
-          payload.accountId,
-          payload.folder,
-          remote.destinationFolder,
-          payload.uid,
-          remote.destinationUid
-        )
-      } else {
-        const add = payload.action === 'mark-read'
-          ? ['\\Seen']
-          : payload.action === 'flag'
-            ? ['\\Flagged']
-            : []
-        const remove = payload.action === 'mark-unread'
-          ? ['\\Seen']
-          : payload.action === 'unflag'
-            ? ['\\Flagged']
-            : []
-        messages = await updateMessageFlags(scope, payload.accountId, payload.folder, payload.uid, add, remove)
+      try {
+        if (remote.destinationFolder) {
+          messages = await moveCachedMessage(
+            scope,
+            payload.accountId,
+            payload.folder,
+            remote.destinationFolder,
+            payload.uid,
+            remote.destinationUid
+          )
+        } else {
+          const add = payload.action === 'mark-read'
+            ? ['\\Seen']
+            : payload.action === 'flag'
+              ? ['\\Flagged']
+              : []
+          const remove = payload.action === 'mark-unread'
+            ? ['\\Seen']
+            : payload.action === 'unflag'
+              ? ['\\Flagged']
+              : []
+          messages = await updateMessageFlags(scope, payload.accountId, payload.folder, payload.uid, add, remove)
+        }
+      } catch {
+        throw new RemoteMailCacheError(scope.t('email.backend.actionCacheFailed'), { action: payload.action, folder: payload.folder, destinationFolder: remote.destinationFolder })
       }
       return {
         action: payload.action,
@@ -239,19 +249,40 @@ const methods = {
     })
 }
 
-export function register(api: MailBackendApi): () => void {
+export function register(api: MailBackendApi): () => Promise<void> {
   setTranslator(api.i18n?.t)
-  const scope: MailBackendContext = { ...emailStoreContext(api.data), network: api.network, credentials: api.credentials, accounts: api.accounts, rpc: api.rpc }
-  let mutation = Promise.resolve()
+  const t = createTranslator(api.i18n?.t)
+  const work = createMailWorkQueue({ busy: () => t('email.backend.busy'), stopped: () => t('email.backend.stopped') })
+  let disposed = false
+  let draining: Promise<void> | undefined
+  const scope: MailBackendContext = {
+    ...emailStoreContext(api.data), network: api.network, credentials: api.credentials, accounts: api.accounts, t,
+    rpc: { handle: api.rpc.handle, emit: (name, payload) => { if (!disposed) api.rpc.emit(name, payload) } }
+  }
   const off = Object.entries(methods).map(([name, method]) => api.rpc.handle(name, async (payload) => {
-    const execute = async () => {
-      try { return { ok: true, data: await method.run(scope, payload) } }
-      catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Mail operation failed.' } }
+    try {
+      const input = method.schema.parse(payload)
+      const accountIds = input && 'accountIds' in input && Array.isArray(input.accountIds) && input.accountIds.length
+        ? input.accountIds.filter((id): id is string => typeof id === 'string')
+        : input && 'accountId' in input && typeof input.accountId === 'string' ? [input.accountId] : []
+      const keys = [...new Set(accountIds)].map(id => `account:${id}`)
+      if (name === 'addSmtpAccount' || name === 'removeAccount' || name === 'listAccounts') keys.push('account-registry')
+      const bytes = new TextEncoder().encode(JSON.stringify(input ?? null)).length
+      return { ok: true, data: await work.run(keys, bytes, async () => method.run(scope, input)) }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Mail operation failed.',
+        ...(error instanceof RemoteMailCacheError ? { outcome: 'remote-complete' as const, data: error.result } : {}) }
     }
-    if (name !== 'addSmtpAccount' && name !== 'removeAccount') return execute()
-    const pending = mutation.then(execute)
-    mutation = pending.then(() => undefined, () => undefined)
-    return pending
   }))
-  return () => { for (const dispose of off) dispose() }
+  return () => {
+    if (draining) return draining
+    disposed = true
+    const accepted = work.dispose()
+    const unregistering = off.map(dispose => { try { dispose(); return Promise.resolve() } catch (error) { return Promise.reject(error) } })
+    draining = Promise.allSettled([accepted, ...unregistering]).then(results => {
+      const failed = results.find(result => result.status === 'rejected')
+      if (failed?.status === 'rejected') throw failed.reason
+    })
+    return draining
+  }
 }

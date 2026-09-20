@@ -9,7 +9,7 @@ import { MailboxControls, Panel } from '../src/Panel'
 import { Page } from '../src/Page'
 import { Preview } from '../src/Preview'
 import { emailDisplaySettingsKey } from '../src/hooks'
-import { formatEmailTimestamp, getStore } from '../src/store'
+import { disposeStore, formatEmailTimestamp, getStore } from '../src/store'
 import { emailDocument, MessageBody } from '../src/MessageBody'
 
 const message: EmailMessageDetail = {
@@ -19,7 +19,7 @@ const message: EmailMessageDetail = {
   memberships: [{ accountId: 'one', folder: 'INBOX', uid: 7 }],
   addresses: { from: [{ name: '', address: 'canopy@example.com' }], to: [{ name: '', address: 'reader@example.com' }], cc: [], replyTo: [] }
 }
-let dispose: (() => void) | undefined
+let dispose: (() => void | Promise<void>) | undefined
 function setup(accountsReady: Promise<void> = Promise.resolve(), details: Partial<EmailMessageDetail> = {}, configure?: (mock: ReturnType<typeof createMockValleyApi>) => void) {
   const mock = createMockValleyApi({ manifest: { id: 'email' } })
   let current = { ...message, ...details }
@@ -40,7 +40,7 @@ function setup(accountsReady: Promise<void> = Promise.resolve(), details: Partia
   dispose = register(mock.api)
   return mock
 }
-afterEach(() => { cleanup(); dispose?.(); dispose = undefined })
+afterEach(async () => { cleanup(); await dispose?.(); dispose = undefined })
 
 describe('Email mailbox', () => {
   it('keeps mailbox filtering in the shared search frame without replacing its input', async () => {
@@ -90,6 +90,78 @@ describe('Email mailbox', () => {
     expect(mock.mail.queryMessages).toHaveBeenCalledTimes(2)
     onSync({ accountId: 'one', folder: 'INBOX', status: 'done', fetched: 1, total: 1 })
     await waitFor(() => expect(mock.mail.queryMessages).toHaveBeenCalledTimes(3))
+  })
+
+  it('joins every sync caller through the final coalesced pass with one active folder request', async () => {
+    const mock = setup()
+    const store = getStore()
+    await store.whenReady
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    let active = 0
+    let maximum = 0
+    mock.mail.syncFolder = vi.fn(async () => {
+      active++
+      maximum = Math.max(maximum, active)
+      await held
+      active--
+      return { ok: true }
+    })
+    const first = store.sync()
+    await waitFor(() => expect(mock.mail.syncFolder).toHaveBeenCalledTimes(1))
+    const repeated = Array.from({ length: 20 }, () => store.sync())
+    expect(repeated.every((promise) => promise === first)).toBe(true)
+    let completed = false
+    void repeated[0].then(() => { completed = true })
+    await Promise.resolve()
+    expect(completed).toBe(false)
+    release()
+    await Promise.all([first, ...repeated])
+    expect(maximum).toBe(1)
+    expect(mock.mail.syncFolder).toHaveBeenCalledTimes(4)
+    expect(store.getSnapshot().syncing).toBe(false)
+  })
+
+  it('drains an accepted sync on disposal and stops its next account and queued rerun', async () => {
+    const mock = setup()
+    const store = getStore()
+    await store.whenReady
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    mock.mail.syncFolder = vi.fn(async () => { await held; return { ok: true } })
+    const first = store.sync()
+    await waitFor(() => expect(mock.mail.syncFolder).toHaveBeenCalledTimes(1))
+    const repeated = store.sync()
+    const publish = vi.fn()
+    store.subscribe(publish)
+    let completed = false
+    const draining = store.dispose().then(() => { completed = true })
+    await Promise.resolve()
+    expect(completed).toBe(false)
+    release()
+    await Promise.all([first, repeated, draining, store.sync()])
+    expect(mock.mail.syncFolder).toHaveBeenCalledTimes(1)
+    expect(publish).not.toHaveBeenCalled()
+  })
+
+  it('keeps a delayed old registration on its captured API and disposes only its own store', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const first = setup(held)
+    const oldStore = getStore()
+    const oldDispose = dispose!
+    const second = setup()
+    const currentStore = getStore()
+    await currentStore.whenReady
+    vi.mocked(second.mail.queryMessages).mockClear()
+    release()
+    await oldStore.whenReady
+    expect(first.mail.queryMessages).toHaveBeenCalledTimes(1)
+    expect(second.mail.queryMessages).not.toHaveBeenCalled()
+    await oldDispose()
+    expect(getStore()).toBe(currentStore)
+    await currentStore.selectAccount('two')
+    expect(second.mail.queryMessages).toHaveBeenCalledTimes(1)
   })
 
   it('shares identical in-flight lists without adopting a late result after the view changes', async () => {
@@ -581,7 +653,7 @@ describe('Email mailbox', () => {
     const store = getStore()
     await store.startCompose()
     store.updateDraft({ to: [{ name: 'Canopy', address: 'canopy@example.com' }], text: 'Biodiversity survey', pending: { to: '', cc: 'moss@', bcc: '' } })
-    store.saveDraft()
+    await store.saveDraft()
     expect(store.getSnapshot()).toMatchObject({ composing: false, compose: { text: 'Biodiversity survey' } })
     await store.startCompose()
     expect(store.getSnapshot().composing).toBe(true)
@@ -597,6 +669,179 @@ describe('Email mailbox', () => {
     await store.cancelCompose()
     expect(store.getSnapshot().compose).not.toBeNull()
     expect(mock.api.ui.confirm).toHaveBeenCalled()
+  })
+
+  it.each([true, false])('joins an accepted send on disposal and restores only unsent drafts (sent=%s)', async (sent) => {
+    const mock = setup()
+    const store = getStore()
+    await store.whenReady
+    await store.startCompose()
+    store.updateDraft({ to: [{ name: '', address: 'canopy@example.com' }], text: 'Unsent field report' })
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    mock.mail.sendEmail = vi.fn(async () => { await held; return sent ? { ok: true } : { ok: false, error: 'SMTP unavailable' } })
+    const sending = store.send()
+    await waitFor(() => expect(mock.mail.sendEmail).toHaveBeenCalledTimes(1))
+    vi.mocked(mock.mail.queryMessages).mockClear()
+    vi.mocked(mock.api.workspace.setMainTabTitle).mockClear()
+    const draining = disposeStore(mock.api)
+    expect(store.dispose()).toBe(draining)
+    expect(getStore(mock.api)).toBe(store)
+    let complete = false
+    void draining.then(() => { complete = true })
+    await Promise.resolve()
+    expect(complete).toBe(false)
+    expect(await store.send()).toBe(false)
+    release()
+    expect(await sending).toBe(sent)
+    await draining
+    expect(mock.mail.queryMessages).not.toHaveBeenCalled()
+    expect(mock.api.workspace.setMainTabTitle).not.toHaveBeenCalled()
+    const replacement = getStore(mock.api)
+    await replacement.whenReady
+    expect(replacement).not.toBe(store)
+    expect(replacement.getSnapshot().compose?.text ?? null).toBe(sent ? null : 'Unsent field report')
+    expect(mock.mail.sendEmail).toHaveBeenCalledTimes(1)
+  })
+
+  it('invalidates an unresolved discard dialog without waiting for user input on disposal', async () => {
+    const mock = setup()
+    const store = getStore()
+    await store.whenReady
+    await store.startCompose()
+    store.updateDraft({ text: 'Keep the draft' })
+    let answer!: (choice: string) => void
+    mock.api.ui.confirm = vi.fn(() => new Promise<string>((resolve) => { answer = resolve }))
+    const cancelling = store.cancelCompose()
+    expect(mock.api.ui.confirm).toHaveBeenCalledTimes(1)
+    await disposeStore(mock.api)
+    await cancelling
+    const replacement = getStore(mock.api)
+    await replacement.whenReady
+    replacement.updateDraft({ text: 'New owner continues the draft' })
+    vi.mocked(mock.api.workspace.setMainTabTitle).mockClear()
+    answer('discard')
+    await Promise.resolve()
+    expect(replacement.getSnapshot().compose?.text).toBe('New owner continues the draft')
+    expect(mock.api.workspace.setMainTabTitle).not.toHaveBeenCalled()
+  })
+
+  it('retains edits made while an older discard dialog is pending', async () => {
+    const mock = setup()
+    const store = getStore()
+    await store.whenReady
+    await store.startCompose()
+    store.updateDraft({ text: 'Initial draft' })
+    let answer!: (choice: string) => void
+    mock.api.ui.confirm = vi.fn(() => new Promise<string>((resolve) => { answer = resolve }))
+    const cancelling = store.cancelCompose()
+    store.updateDraft({ text: 'Newer edits' })
+    answer('discard')
+    await cancelling
+    expect(store.getSnapshot().compose?.text).toBe('Newer edits')
+  })
+
+  it('drains accepted reply parsing and stops subsequent recipient reads after disposal', async () => {
+    const mock = setup()
+    const store = getStore()
+    await store.whenReady
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    mock.mail.parseAddresses = vi.fn(async () => { await held; return { ok: true, data: { addresses: [] } } })
+    const starting = store.startCompose('reply-all', message)
+    await waitFor(() => expect(mock.mail.parseAddresses).toHaveBeenCalledTimes(1))
+    let complete = false
+    const draining = disposeStore(mock.api)
+    void draining.then(() => { complete = true })
+    await Promise.resolve()
+    expect(complete).toBe(false)
+    release()
+    await Promise.all([starting, draining])
+    expect(mock.mail.parseAddresses).toHaveBeenCalledTimes(1)
+    expect(store.getSnapshot().compose).toBeNull()
+  })
+
+  it('does not replace a newer compose request when an older reply parse finishes', async () => {
+    const mock = setup()
+    const store = getStore()
+    await store.whenReady
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    mock.mail.parseAddresses = vi.fn(async () => { await held; return { ok: true, data: { addresses: [] } } })
+    const starting = store.startCompose('reply-all', message)
+    await waitFor(() => expect(mock.mail.parseAddresses).toHaveBeenCalledTimes(1))
+    await store.startCompose('forward', { ...message, subject: 'Newer message' })
+    release()
+    await starting
+    expect(mock.mail.parseAddresses).toHaveBeenCalledTimes(1)
+    expect(store.getSnapshot().compose).toMatchObject({ mode: 'forward', subject: 'Fwd: Newer message' })
+  })
+
+  it('reports failed reply parsing while leaving the current draft intact', async () => {
+    const mock = setup()
+    const store = getStore()
+    await store.whenReady
+    await store.startCompose()
+    store.updateDraft({ text: 'Existing draft' })
+    mock.api.ui.confirm = vi.fn(async () => 'discard')
+    mock.mail.parseAddresses = vi.fn(async () => { throw new Error('Address parsing unavailable') })
+    await store.startCompose('reply-all', message)
+    expect(store.getSnapshot()).toMatchObject({ error: 'Address parsing unavailable', compose: { text: 'Existing draft' } })
+  })
+
+  it.each(['accounts', 'folders', 'list', 'reader', 'action', 'restore', 'remove'] as const)('drains accepted %s work and rejects further dispatch from a disposed store', async (scenario) => {
+    const mock = setup()
+    const store = getStore()
+    await store.whenReady
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const calls = vi.spyOn(mock.api.backend, 'call')
+    let work: Promise<unknown> | undefined
+    if (scenario === 'accounts') {
+      const original = mock.mail.listAccounts
+      mock.mail.listAccounts = async () => { await held; return original() }
+      work = store.refreshAccounts()
+    } else if (scenario === 'folders') {
+      const original = mock.mail.listFolders
+      mock.mail.listFolders = async (accountId) => { await held; return original(accountId) }
+      work = store.selectAccount('two')
+    } else if (scenario === 'list') {
+      const original = mock.mail.queryMessages
+      mock.mail.queryMessages = async (input) => { await held; return original(input) }
+      work = store.selectView('recent')
+    } else if (scenario === 'reader' || scenario === 'restore') {
+      const original = mock.mail.readMessage
+      mock.mail.readMessage = async (input) => { await held; return original(input) }
+      if (scenario === 'reader') store.openMessage(message)
+      else work = store.restoreSelection({ accountIds: ['one'], view: 'folder', folder: 'INBOX', message })
+    } else if (scenario === 'action') {
+      const original = mock.mail.applyMessageAction
+      mock.mail.applyMessageAction = async (input) => { await held; return original(input) }
+      work = store.act(message, 'trash')
+    } else {
+      const original = mock.mail.removeAccount
+      mock.mail.removeAccount = async (accountId) => { await held; return original(accountId) }
+      work = store.removeAccount('one')
+    }
+    await waitFor(() => expect(calls).toHaveBeenCalled())
+    const acceptedCalls = calls.mock.calls.length
+    const publish = vi.fn()
+    store.subscribe(publish)
+    vi.mocked(mock.api.workspace.setMainTabTitle).mockClear()
+    let complete = false
+    const draining = disposeStore(mock.api)
+    void draining.then(() => { complete = true })
+    await Promise.resolve()
+    expect(complete).toBe(false)
+    store.openMessage(message)
+    store.setQuery('late query')
+    await Promise.all([store.selectAccount('one'), store.selectFolder('Archive'), store.refreshAccounts(), store.removeAccount('one'), store.act(message, 'flag')])
+    expect(calls).toHaveBeenCalledTimes(acceptedCalls)
+    release()
+    await Promise.all([work, draining])
+    expect(calls).toHaveBeenCalledTimes(acceptedCalls)
+    expect(publish).not.toHaveBeenCalled()
+    expect(mock.api.workspace.setMainTabTitle).not.toHaveBeenCalled()
   })
 
   it('keeps the reader and rows unchanged when a folder-qualified action fails', async () => {

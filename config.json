@@ -2,6 +2,7 @@
   "icon": "mail",
   "keepTabIcon": true,
   "main": "runtime/index.js",
+  "indexState": "scoped",
   "uiSlots": {
     "left_sidebar": "email.panel",
     "right_sidebar": "email.preview",
@@ -19,6 +20,21 @@
   "settingsView": "email.settings",
   "drivers": [],
   "datasets": [
+    {
+      "id": "drafts",
+      "store": "durable",
+      "version": 1,
+      "title": "Compose drafts",
+      "titleKey": "email.draftsDataset",
+      "visibility": "private",
+      "sensitivity": "sensitive",
+      "primaryKey": ["id"],
+      "columns": {
+        "id": { "type": "text" },
+        "draft": { "type": "json" },
+        "delivery": { "type": "text" }
+      }
+    },
     {
       "id": "messages",
       "store": "cache",
@@ -137,7 +153,7 @@
     {
       "id": "folder_messages",
       "store": "cache",
-      "version": 1,
+      "version": 2,
       "title": "Folder membership",
       "primaryKey": [
         "accountId",
@@ -159,6 +175,14 @@
         },
         "flags": {
           "type": "json"
+        },
+        "unread": {
+          "type": "boolean",
+          "nullable": true
+        },
+        "flagged": {
+          "type": "boolean",
+          "nullable": true
         }
       },
       "indexes": [
@@ -166,6 +190,35 @@
           "id": "message",
           "columns": [
             "accountId",
+            "messageId"
+          ]
+        },
+        {
+          "id": "folder_query",
+          "columns": [
+            "accountId",
+            "folder",
+            "uid",
+            "messageId"
+          ]
+        },
+        {
+          "id": "unread_query",
+          "columns": [
+            "accountId",
+            "unread",
+            "folder",
+            "uid",
+            "messageId"
+          ]
+        },
+        {
+          "id": "flagged_query",
+          "columns": [
+            "accountId",
+            "flagged",
+            "folder",
+            "uid",
             "messageId"
           ]
         }
@@ -497,5 +550,74 @@
       "mail"
     ],
     "credentials": true
-  }
+  },
+  "datasetMigrations": [
+    {
+      "id": "membership-flag-projection-v2",
+      "store": "cache",
+      "fromVersion": 1,
+      "toVersion": 2,
+      "steps": [
+        {
+          "operation": "add-column",
+          "dataset": "folder_messages",
+          "column": "unread",
+          "definition": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        {
+          "operation": "add-column",
+          "dataset": "folder_messages",
+          "column": "flagged",
+          "definition": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        {
+          "operation": "create-index",
+          "dataset": "folder_messages",
+          "index": {
+            "id": "folder_query",
+            "columns": [
+              "accountId",
+              "folder",
+              "uid",
+              "messageId"
+            ]
+          }
+        },
+        {
+          "operation": "create-index",
+          "dataset": "folder_messages",
+          "index": {
+            "id": "unread_query",
+            "columns": [
+              "accountId",
+              "unread",
+              "folder",
+              "uid",
+              "messageId"
+            ]
+          }
+        },
+        {
+          "operation": "create-index",
+          "dataset": "folder_messages",
+          "index": {
+            "id": "flagged_query",
+            "columns": [
+              "accountId",
+              "flagged",
+              "folder",
+              "uid",
+              "messageId"
+            ]
+          }
+        }
+      ]
+    }
+  ]
 }

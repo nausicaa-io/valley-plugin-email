@@ -181,7 +181,7 @@ export interface EmailDriver {
   /** Read cached messages for a folder (no network). */
   readFolder(accountId: string, folder?: string): Promise<EmailMessagesResult>
   /** Send a message and append it to the Sent cache. */
-  sendEmail(input: EmailSendInput): Promise<DriverResult & { data?: { messageId: string } }>
+  sendEmail(input: EmailSendInput): Promise<DriverResult & { outcome?: 'remote-complete'; data?: { messageId: string } }>
   /** Mutate one message on the server and mirror the successful result into the local cache. */
   applyMessageAction(input: EmailMessageActionInput): Promise<EmailMessageActionResult>
   /** Subscribe to IMAP sync progress events. Returns an unsubscribe fn. */

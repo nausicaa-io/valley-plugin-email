@@ -106,7 +106,7 @@ export const Compose: React.FC = () => {
     <header className="email-compose-header"><h2>{uiText(draft.mode === 'reply-all' ? 'email.replyAll' : draft.mode === 'reply' ? 'auto.6c2bb735a46a' : draft.mode === 'forward' ? 'auto.ba4e72261283' : 'auto.1ed2e7b50fa1')}</h2>
       <div className="email-form-actions"><button className="email-btn primary" disabled={snap.sending || !sender || !draft.to.length || Object.values(draft.pending).some((value) => value.trim())} onClick={() => { void store.send() }}>
         <Send />{uiText(snap.sending ? 'auto.cf765512cc6d' : 'auto.9bc2575c3930')}</button>
-        <button className="email-btn" disabled={snap.sending} onClick={() => { store.saveDraft() }}>{uiText('email.saveDraft')}</button>
+        <button className="email-btn" disabled={snap.sending} onClick={() => { void store.saveDraft() }}>{uiText('email.saveDraft')}</button>
         <button className="email-btn" disabled={snap.sending} onClick={() => { void store.cancelCompose() }}>{uiText('email.discard')}</button>
       </div>
     </header>

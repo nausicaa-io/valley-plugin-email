@@ -1,9 +1,11 @@
 import { createMockValleyApi } from '@valley/plugin-testkit'
 import type { EmailDriver, EmailMessageActionInput, EmailMessageQuery, EmailMessageRef, EmailSendInput, EmailSmtpAccountInput } from '../src/mailTypes'
 import { parseEmailAddresses } from '../src/backend/query'
+import config from '../config.json'
+import type { ValleyPluginManifest } from '@valley/plugin-sdk/types'
 
 export function createMailMock(options?: Parameters<typeof createMockValleyApi>[0]) {
-  const mock = createMockValleyApi(options)
+  const mock = createMockValleyApi({ ...options, manifest: { id: 'email', ...options?.manifest, datasets: options?.manifest?.datasets ?? config.datasets as unknown as ValleyPluginManifest['datasets'] } })
   const mail: EmailDriver = {
     queryMessages: async () => ({ ok: true, data: { messages: [] } }),
     readMessage: async () => ({ ok: true, data: { message: null } }),

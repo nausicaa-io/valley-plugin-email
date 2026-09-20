@@ -198,6 +198,10 @@
   "email.backend.operation": "Unsupported mail dataset operation",
   "email.backend.accountsInvalid": "Stored mail accounts are invalid",
   "email.backend.accountsChanged": "Mail accounts changed. Reload and try again.",
+  "email.backend.busy": "Mail is busy. Wait for current requests to finish and try again.",
+  "email.backend.stopped": "Mail was stopped before this request could start.",
+  "email.backend.sentCacheFailed": "The email was sent, but its local copy could not be saved. Do not resend it.",
+  "email.backend.actionCacheFailed": "The mail server accepted the action, but the local cache could not be updated. Sync to refresh the mailbox.",
   "email.backend.archive": "Archive",
   "email.backend.junk": "Junk",
   "email.backend.trash": "Trash",
@@ -235,5 +239,9 @@
   "email.agentError.string": "{{value}} must be a string.",
   "email.agentError.boolean": "{{value}} must be a boolean.",
   "email.agentError.integer": "{{value}} must be an integer within the documented range.",
-  "email.agentError.unsupported": "Unsupported {{field}}: {{value}}"
+  "email.agentError.unsupported": "Unsupported {{field}}: {{value}}",
+  "email.draftsDataset": "Compose drafts",
+  "email.draftInvalid": "The saved draft is invalid. It has been preserved without changes.",
+  "email.draftConflict": "This draft changed elsewhere. Your edits are kept here; saving and discarding are blocked to protect the saved draft.",
+  "email.draftUncertain": "Sending may have completed. Check Sent before intentionally sending this draft again."
 }

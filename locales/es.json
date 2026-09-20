@@ -198,6 +198,10 @@
   "email.backend.operation": "Operación de datos de correo no compatible",
   "email.backend.accountsInvalid": "Las cuentas de correo guardadas no son válidas",
   "email.backend.accountsChanged": "Las cuentas de correo cambiaron. Recarga y vuelve a intentarlo.",
+  "email.backend.busy": "El correo está ocupado. Espera a que terminen las solicitudes actuales e inténtalo de nuevo.",
+  "email.backend.stopped": "El correo se detuvo antes de que pudiera iniciarse esta solicitud.",
+  "email.backend.sentCacheFailed": "El correo se envió, pero no se pudo guardar su copia local. No lo envíes de nuevo.",
+  "email.backend.actionCacheFailed": "El servidor aceptó la acción, pero no se pudo actualizar la caché local. Sincroniza para actualizar el buzón.",
   "email.backend.archive": "Archivo",
   "email.backend.junk": "Correo no deseado",
   "email.backend.trash": "Papelera",
@@ -235,5 +239,9 @@
   "email.agentError.string": "{{value}} debe ser una cadena.",
   "email.agentError.boolean": "{{value}} debe ser un booleano.",
   "email.agentError.integer": "{{value}} debe ser un entero dentro del rango documentado.",
-  "email.agentError.unsupported": "{{field}} no admitido: {{value}}"
+  "email.agentError.unsupported": "{{field}} no admitido: {{value}}",
+  "email.draftsDataset": "Borradores de correo",
+  "email.draftInvalid": "El borrador guardado no es válido. Se ha conservado sin cambios.",
+  "email.draftConflict": "Este borrador cambió en otro lugar. Tus cambios se conservan aquí; guardar y descartar están bloqueados para proteger el borrador guardado.",
+  "email.draftUncertain": "Es posible que el envío se haya completado. Revisa Enviados antes de volver a enviar este borrador intencionadamente."
 }
