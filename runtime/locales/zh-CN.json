@@ -239,5 +239,9 @@
   "email.agentError.string": "{{value}} 必须为字符串。",
   "email.agentError.boolean": "{{value}} 必须为布尔值。",
   "email.agentError.integer": "{{value}} 必须为文档指定范围内的整数。",
-  "email.agentError.unsupported": "不支持的 {{field}}：{{value}}"
+  "email.agentError.unsupported": "不支持的 {{field}}：{{value}}",
+  "email.draftsDataset": "邮件草稿",
+  "email.draftInvalid": "保存的草稿无效，已保留原样。",
+  "email.draftConflict": "此草稿已在其他位置更改。你的编辑已保留在此窗口；为保护已保存的草稿，保存和丢弃操作已暂停。",
+  "email.draftUncertain": "邮件可能已发送。再次主动发送此草稿前，请先检查已发送邮件。"
 }

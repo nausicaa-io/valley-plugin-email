@@ -239,5 +239,9 @@
   "email.agentError.string": "{{value}} muss eine Zeichenfolge sein.",
   "email.agentError.boolean": "{{value}} muss ein Wahrheitswert sein.",
   "email.agentError.integer": "{{value}} muss eine ganze Zahl im dokumentierten Bereich sein.",
-  "email.agentError.unsupported": "Nicht unterstütztes {{field}}: {{value}}"
+  "email.agentError.unsupported": "Nicht unterstütztes {{field}}: {{value}}",
+  "email.draftsDataset": "Nachrichtenentwürfe",
+  "email.draftInvalid": "Der gespeicherte Entwurf ist ungültig. Er wurde unverändert aufbewahrt.",
+  "email.draftConflict": "Dieser Entwurf wurde an anderer Stelle geändert. Deine Änderungen bleiben hier erhalten. Speichern und Verwerfen sind gesperrt, damit der gespeicherte Entwurf erhalten bleibt.",
+  "email.draftUncertain": "Die Nachricht wurde möglicherweise gesendet. Prüfe Gesendet, bevor du diesen Entwurf bewusst erneut sendest."
 }

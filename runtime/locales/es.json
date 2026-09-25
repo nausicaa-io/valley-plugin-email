@@ -239,5 +239,9 @@
   "email.agentError.string": "{{value}} debe ser una cadena.",
   "email.agentError.boolean": "{{value}} debe ser un booleano.",
   "email.agentError.integer": "{{value}} debe ser un entero dentro del rango documentado.",
-  "email.agentError.unsupported": "{{field}} no admitido: {{value}}"
+  "email.agentError.unsupported": "{{field}} no admitido: {{value}}",
+  "email.draftsDataset": "Borradores de correo",
+  "email.draftInvalid": "El borrador guardado no es válido. Se ha conservado sin cambios.",
+  "email.draftConflict": "Este borrador cambió en otro lugar. Tus cambios se conservan aquí; guardar y descartar están bloqueados para proteger el borrador guardado.",
+  "email.draftUncertain": "Es posible que el envío se haya completado. Revisa Enviados antes de volver a enviar este borrador intencionadamente."
 }

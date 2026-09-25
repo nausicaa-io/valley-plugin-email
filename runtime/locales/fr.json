@@ -239,5 +239,9 @@
   "email.agentError.string": "{{value}} doit être une chaîne.",
   "email.agentError.boolean": "{{value}} doit être un booléen.",
   "email.agentError.integer": "{{value}} doit être un entier dans l’intervalle documenté.",
-  "email.agentError.unsupported": "{{field}} non pris en charge : {{value}}"
+  "email.agentError.unsupported": "{{field}} non pris en charge : {{value}}",
+  "email.draftsDataset": "Brouillons de messages",
+  "email.draftInvalid": "Le brouillon enregistré est invalide. Il a été conservé sans modification.",
+  "email.draftConflict": "Ce brouillon a été modifié ailleurs. Vos modifications sont conservées ici ; l’enregistrement et la suppression sont bloqués pour protéger le brouillon enregistré.",
+  "email.draftUncertain": "Le message a peut-être été envoyé. Vérifiez les messages envoyés avant de renvoyer volontairement ce brouillon."
 }
