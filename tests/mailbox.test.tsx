@@ -634,6 +634,17 @@ describe('Email mailbox', () => {
     expect(getStore().getSnapshot().mailboxesByAccount.two).toHaveLength(3)
   })
 
+  it('reports one sync error line per account when every folder fails the same way', async () => {
+    const mock = setup()
+    await getStore().whenReady
+    const blocked = 'Plugin network access is disabled in VALLEY_TEST_MODE'
+    mock.mail.syncFolder = vi.fn(async () => ({ ok: false, error: blocked }))
+    await getStore().selectView('recent')
+    await getStore().sync()
+    expect(mock.mail.syncFolder).toHaveBeenCalledWith('one', 'Archive', 50)
+    expect(getStore().getSnapshot().error).toBe(`one@example.com: ${blocked}\ntwo@example.com: ${blocked}`)
+  })
+
   it('syncs the latest account selection after an in-flight sync finishes', async () => {
     const mock = setup()
     await getStore().whenReady

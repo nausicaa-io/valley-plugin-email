@@ -169,3 +169,15 @@ it('keeps package styles tokenized, scalable, and consistent with SDK drop marke
     }
   }
 })
+
+describe('German catalog wording', () => {
+  const de = JSON.parse(readStyleFile(joinStylePath(__dirname, '..', 'locales', 'de.json'), 'utf8')) as Record<string, string>
+  it('writes E-Mail with a hyphen and addresses the reader with du', () => {
+    const values = Object.values(de)
+    expect(values.filter((value) => /\bEmail\b/.test(value))).toEqual([])
+    expect(values.filter((value) => /\b(Sie|Ihr|Ihre|Ihren|Ihrem|Ihrer|Ihnen|Ihres)\b/.test(value))).toEqual([])
+    expect(values.filter((value) => value.includes('�'))).toEqual([])
+    expect(de['auto.225300411395']).toBe('E-Mail-Konten')
+    expect(de['auto.c94d3175a656']).toBe('E-Mail-Adresse')
+  })
+})

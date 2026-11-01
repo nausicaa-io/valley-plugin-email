@@ -35,7 +35,7 @@ const CSS = `
 .email-selector > svg:last-child { width:10px; }
 .email-mailbox-controls.compact .email-account-selector { justify-content:center; width:26px; padding:0; flex:0 0 26px; }
 .email-mailbox-controls.compact .email-account-selector span,.email-mailbox-controls.compact .email-account-selector > svg:last-child { display:none; }
-.email-mailbox-controls.compact .email-selector { max-width:110px; }
+.email-mailbox-controls.compact .email-selector { max-width:150px; }
 .email-toolbar { --email-toolbar-action-space:210px; position:relative; display:flex; align-items:center; gap:6px; height:var(--app-bar-height); min-height:var(--app-bar-height); box-sizing:border-box; padding:0 calc(var(--plugin-actions-offset, 0px) + 8px) 0 calc(var(--plugin-navigation-offset, 0px) + 8px); border-bottom:1px solid var(--border-light); background:var(--pane-bg); }
 .email-toolbar-title { position:absolute; left:50%; top:calc(var(--app-bar-height) / 2); transform:translate(-50%,-50%); max-width:max(0px,calc(100% - 2 * max(calc(var(--plugin-navigation-offset, 0px) + 8px),calc(var(--plugin-actions-offset, 0px) + var(--email-toolbar-action-space))))); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:center; color:var(--title-color); font:600 .8125rem/1.4 var(--body-font); }
 .email-toolbar > .email-mailbox-controls { flex:1; }
@@ -218,7 +218,7 @@ button.email-person { border:0; padding:0; background:none; text-align:left; cur
 .email-notice-glyph svg { display:block; width:14px; height:14px; }
 .email-notice-body { display:flex; flex-direction:column; gap:2px; min-width:0; }
 .email-notice-title { font-size:0.75rem; font-weight:600; color:var(--text-color); }
-.email-notice-detail { font-size:0.71875rem; line-height:1.45; color:var(--text-secondary); overflow-wrap:anywhere; }
+.email-notice-detail { font-size:0.71875rem; line-height:1.45; color:var(--text-secondary); overflow-wrap:anywhere; white-space:pre-line; }
 .email-notice-actions { display:flex; gap:12px; margin-top:5px; }
 .email-notice-btn { padding:0; border:none; background:none; cursor:pointer; font:inherit;
   font-size:0.71875rem; font-weight:600; color:var(--accent-color); }

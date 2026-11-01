@@ -51,7 +51,7 @@ export function createAccountsController(api: ValleyPluginApi, ports: AccountPor
       }
       const mailboxes = [...merged.values()]
       ports.set({ mailboxes, mailboxesByAccount, folders: mailboxes.map((mailbox) => mailbox.path) })
-      if (errors.length) ports.report(errors.join('\n'))
+      if (errors.length) ports.report([...new Set(errors)].join('\n'))
     } catch (error) { if (JSON.stringify(ports.activeAccountIds()) === selection && generation === folderRequest) ports.report(error) }
   }
   async function refreshAccounts(): Promise<void> {

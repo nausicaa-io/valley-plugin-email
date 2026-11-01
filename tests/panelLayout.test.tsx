@@ -75,6 +75,11 @@ describe('Email sidebar layout', () => {
     expect(css.get('.email-mailbox-controls [data-focus-source="pointer"]:focus-visible')).toContain('outline:none')
   })
 
+  it('gives the sidebar mailbox selector room for a long folder name such as Posteingang', () => {
+    const selector = rules().get('.email-mailbox-controls.compact .email-selector')
+    expect(selector).toContain('max-width:150px')
+  })
+
   it('lets the compose recipient field shrink with a narrow pane instead of overflowing it', () => {
     const add = rules().get('.email-recipient-add')
     expect(add).toContain('min-width:0')

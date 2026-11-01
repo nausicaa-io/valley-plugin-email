@@ -57,7 +57,7 @@ export function createSyncController(api: ValleyPluginApi, ports: SyncPorts, mai
         if (current()) {
           const refresh = latestRefresh as { key: string; promise: Promise<void> } | undefined
           await (refresh?.key === ports.messageKey() ? refresh.promise : ports.refreshMessages())
-          if (current() && errors.length) ports.report(errors.join('\n'))
+          if (current() && errors.length) ports.report([...new Set(errors)].join('\n'))
         }
       } catch (error) { if (current()) ports.report(error) }
       finally {

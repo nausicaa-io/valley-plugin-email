@@ -1,6 +1,7 @@
 import type { ValleyPluginApi } from '@valley/plugin-sdk'
 import type { EmailNavigation } from './mailboxController'
 import type { EmailSelection, EmailStore } from './store'
+import { uiText } from './localization'
 import { api } from './runtime'
 
 /**
@@ -137,6 +138,16 @@ export function createEmailTabs(api: ValleyPluginApi, store: EmailStore): EmailT
     }
     return false
   }
+  // A background tab the draft left still shows "Compose" in the tab strip; it gets its mailbox title back now, not on its next visit.
+  const retitle = (tab: string): void => {
+    const entry = tab === focused ? undefined : parked.get(tab)
+    if (!entry) return
+    const { view, folder } = entry.navigation?.selection ?? entry.selection
+    const next = entry.title || (view === 'folder' ? folder : uiText(`email.view.${view}`))
+    if (!next) return
+    api.workspace.setMainTabTitle(next, tab || undefined)
+    if (tab === '') { title = next; void api.settings.set(MAIN_TAB_TITLE_SETTING, next).catch(() => undefined) }
+  }
   const owns = (tab: string): boolean => owner?.tab === tab && store.getSnapshot().compose?.id === owner.draft
   // Follows the live mailbox outside tab switches and restores, which rewrite it on purpose.
   const track = (): void => {
@@ -148,6 +159,7 @@ export function createEmailTabs(api: ValleyPluginApi, store: EmailStore): EmailT
     shown = composing
     const next = !compose || released ? null : composing && here !== null ? { draft: compose.id, tab: here } : owner?.draft === compose.id ? owner : null
     if (next?.tab === owner?.tab && next?.draft === owner?.draft) return
+    if (owner && owner.tab !== next?.tab) retitle(owner.tab)
     owner = next
     closed = null
     seen = next !== null && openTabKeys(api).has(next.tab)
