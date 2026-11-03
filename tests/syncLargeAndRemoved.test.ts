@@ -40,7 +40,7 @@ async function backend(folders: Record<string, FakeFolder>, modes: FakeModes = {
   // A restart: the backend stops and registers again on the same plugin data.
   const restart = async () => { await disposeBackend(); disposeBackend = register(api) }
   const call = async <T = Record<string, unknown>>(name: string, payload: unknown) => assertCommandOutput(name, payload, await handlers.get(name)!(payload)) as { ok: boolean; error?: string; data?: T }
-  const sync = (folder = 'INBOX') => call<{ fetched: number; total: number }>('syncFolder', { accountId: account.id, folder, limit: 100 })
+  const sync = (folder = 'INBOX', limit = 100) => call<{ fetched: number; total: number }>('syncFolder', { accountId: account.id, folder, limit })
   // A command operation brings its own data API object on every call, as the CLI and Workflow paths do.
   const syncOperation = async (folder = 'INBOX') => operations.get('command.syncFolder')!({ accountId: account.id, folder, limit: 100 }, { id: crypto.randomUUID(), cancellation: new AbortController().signal, api: { ...server.api, data: { ...mock.api.data } } }) as Promise<{ ok: boolean }>
   const uids = async (folder = 'INBOX') => (await mock.api.data.dataset('folder_messages').query({ where: { accountId: account.id, folder }, select: ['uid'], limit: 1000 })).rows.map(row => Number(row.uid)).sort((a, b) => a - b)
@@ -172,9 +172,53 @@ describe('sync reconciles deleted mail (F3)', () => {
     const mail = await backend(folders)
     expect(await mail.sync()).toMatchObject({ ok: true })
     Object.assign(mail.server.modes, modes)
-    folders.INBOX.messages = folders.INBOX.messages.slice(0, 18)
-    for (let cycle = 0; cycle < 3; cycle++) await mail.sync()
+    // Older messages (below the window of the five newest) are the ones only UID SEARCH can confirm gone.
+    folders.INBOX.messages = folders.INBOX.messages.filter(message => message.uid !== 2 && message.uid !== 3)
+    for (let cycle = 0; cycle < 3; cycle++) await mail.sync('INBOX', 5)
     expect(await mail.uids()).toHaveLength(20)
+    await mail.dispose()
+  })
+
+  it('confirms messages gone inside the listed window without UID SEARCH, and searches only older ones, a bounded slice per sync', async () => {
+    const folders = { INBOX: { uidValidity: 7, messages: Array.from({ length: 30 }, (_, index) => small(index + 1)) } }
+    const mail = await backend(folders)
+    expect(await mail.sync()).toMatchObject({ ok: true })
+    folders.INBOX.messages = folders.INBOX.messages.filter(message => message.uid !== 29)
+    mail.server.reset()
+    expect(await mail.sync()).toMatchObject({ ok: true })
+    expect(await mail.uids()).not.toContain(29)
+    expect(mail.server.commands.filter(command => command.startsWith('UID SEARCH'))).toEqual([])
+    const slice = MAIL_SYNC_LIMITS.reconcileUids
+    Object.assign(MAIL_SYNC_LIMITS, { reconcileUids: 8 })
+    try {
+      folders.INBOX.messages = folders.INBOX.messages.filter(message => message.uid !== 3 && message.uid !== 15 && message.uid !== 27)
+      mail.server.reset()
+      for (let cycle = 0; cycle < 3; cycle++) expect(await mail.sync('INBOX', 5)).toMatchObject({ ok: true })
+      // The window holds UIDs 24-30 (27 gone at once); 1-23 are checked eight at a time, each search with the lowest listed UID as a canary.
+      expect(mail.server.commands.filter(command => command.startsWith('UID SEARCH'))).toEqual(['UID SEARCH UID 1:8,24', 'UID SEARCH UID 9:16,24', 'UID SEARCH UID 17:24'])
+      expect(await mail.uids()).toEqual(Array.from({ length: 30 }, (_, index) => index + 1).filter(uid => ![3, 15, 27, 29].includes(uid)))
+      mail.server.reset()
+      expect(await mail.sync('INBOX', 5)).toMatchObject({ ok: true })
+      expect(mail.server.commands.filter(command => command.startsWith('UID SEARCH'))).toEqual(['UID SEARCH UID 1:2,4:9,24'])
+    } finally { Object.assign(MAIL_SYNC_LIMITS, { reconcileUids: slice }) }
+    await mail.dispose()
+  })
+
+  it('confirms a large removal of older messages by searching the same UIDs again', async () => {
+    const folders = { INBOX: { uidValidity: 7, messages: Array.from({ length: 40 }, (_, index) => small(index + 1)) } }
+    const mail = await backend(folders)
+    expect(await mail.sync()).toMatchObject({ ok: true })
+    const slice = MAIL_SYNC_LIMITS.reconcileUids
+    Object.assign(MAIL_SYNC_LIMITS, { reconcileUids: 20 })
+    try {
+      folders.INBOX.messages = folders.INBOX.messages.filter(message => message.uid > 15)
+      mail.server.reset()
+      expect(await mail.sync('INBOX', 5)).toMatchObject({ ok: true })
+      expect(await mail.uids()).toHaveLength(40)
+      expect(await mail.sync('INBOX', 5)).toMatchObject({ ok: true })
+      expect(mail.server.commands.filter(command => command.startsWith('UID SEARCH'))).toEqual(['UID SEARCH UID 1:20,36', 'UID SEARCH UID 1:15,36'])
+      expect(await mail.uids()).toEqual(Array.from({ length: 25 }, (_, index) => index + 16))
+    } finally { Object.assign(MAIL_SYNC_LIMITS, { reconcileUids: slice }) }
     await mail.dispose()
   })
 
@@ -275,6 +319,21 @@ describe('sent mail is kept on the server and locally (F15)', () => {
     folders.Sent.messages.push(small(5))
     expect(await mail.sync('Sent')).toMatchObject({ ok: true })
     expect(await mail.uids('Sent')).toEqual([5])
+    await mail.dispose()
+  })
+  it('keeps the local copy in the special-use Sent mailbox whatever its name, so its sync replaces it', async () => {
+    const folders = { INBOX: { uidValidity: 7, messages: [] as ReturnType<typeof small>[] }, Gesendet: { uidValidity: 8, messages: [] as ReturnType<typeof small>[], specialUse: '\\Sent' } }
+    const mail = await backend(folders)
+    expect(await mail.call('listFolders', { accountId: account.id })).toMatchObject({ ok: true })
+    vi.spyOn(transport, 'sendMail').mockImplementation(async (_api, _account, _input, _automatic, accepted) => { accepted?.(new TextEncoder().encode('Subject: x\r\n\r\nbody\r\n')); return '<m5@birds.example>' })
+    vi.spyOn(transport, 'appendSentMessage').mockRejectedValue(new Error('NO [OVERQUOTA] mailbox full'))
+    expect(await send(mail)).toMatchObject({ ok: true })
+    expect(await mail.uids('Sent')).toEqual([])
+    const [local] = await mail.uids('Gesendet')
+    expect(local).toBeGreaterThan(0xffffffff)
+    folders.Gesendet.messages.push(small(5))
+    expect(await mail.sync('Gesendet')).toMatchObject({ ok: true })
+    expect(await mail.uids('Gesendet')).toEqual([5])
     await mail.dispose()
   })
   it.each([

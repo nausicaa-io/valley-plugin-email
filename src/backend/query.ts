@@ -3,7 +3,7 @@ import { decodeText, encodeText } from './encoding'
 import { addressParser } from 'postal-mime'
 import type { EmailAddress, EmailMessageDetail, EmailMessageQuery, EmailMessageRef, EmailMessageSummary } from '../mailTypes'
 import type { DatasetPage, DatasetRecord, DatasetWhere } from '@valley/plugin-sdk/datasets'
-import { datasetRequest as request, ensureMembershipFlags, folderProjection, projectAssignments, queryAll, readStructure, type EmailStoreContext } from './cache'
+import { datasetRequest as request, ensureMembershipFlags, folderProjection, projectAssignments, queryAll, readStructure, removeFromFolder, type EmailStoreContext } from './cache'
 import { readAutomationHeaders } from './automation'
 
 export function parseEmailAddresses(value: string, strict = false): EmailAddress[] {
@@ -128,6 +128,18 @@ export async function cacheMailboxes(scope: EmailStoreContext, accountId: string
   }))
   const changed = rows.filter((row) => { const previous = cached.get(row.path); return !previous || Object.entries(row).some(([column, value]) => previous[column] !== value) })
   if (changed.length) await request(scope, { operation: 'transaction', operations: changed.map((values) => ({ operation: 'upsert', dataset: scope.datasets.mailboxes, values })) })
+  // A mailbox the server no longer lists (or a cached folder it never listed) takes its cached messages (once no other folder
+  // holds them), its sync state and its row along. A listing without INBOX is not a whole listing and removes nothing.
+  const listed = new Set(rows.map((row) => row.path))
+  const whole = rows.some((row) => row.path.toUpperCase() === 'INBOX')
+  const folders = whole ? (await scope.data.dataset(scope.datasets.folderMessages).aggregate({ where: { accountId }, groupBy: ['folder'], metrics: { total: { operation: 'count' } } })).map((row) => String(row.folder)) : []
+  for (const path of whole ? [...new Set([...cached.keys(), ...folders])].filter((path) => !listed.has(path)) : []) {
+    await removeFromFolder(scope, accountId, path, (await queryAll(scope, scope.datasets.folderMessages, { accountId, folder: path }, ['uid'])).map((row) => Number(row.uid)))
+    await request(scope, { operation: 'transaction', operations: [
+      { operation: 'delete', dataset: 'sync_state', key: { accountId, folder: path } },
+      { operation: 'delete', dataset: scope.datasets.mailboxes, key: { accountId, path } }
+    ] })
+  }
   for (const mailbox of mailboxes) {
     const stale: DatasetWhere = (cached.get(mailbox.path)?.specialUse ?? null) === (mailbox.specialUse ?? null) ? { or: [{ projectionVersion: { isNull: true } }, { projectionVersion: { neq: 1 } }] } : {}
     let cursor: string | undefined
@@ -142,4 +154,12 @@ export async function cacheMailboxes(scope: EmailStoreContext, accountId: string
 
 export async function cachedMailboxes(scope: EmailStoreContext, accountId: string): Promise<DatasetRecord[]> {
   return queryAll(scope, scope.datasets.mailboxes, { accountId })
+}
+
+/** The cached Sent mailbox of an account: its special-use \\Sent folder, else one named like it, else "Sent". */
+export async function cachedSentFolder(scope: EmailStoreContext, accountId: string): Promise<string> {
+  const mailboxes = (await cachedMailboxes(scope, accountId)).filter((row) => row.selectable !== false)
+  const sent = mailboxes.find((row) => typeof row.specialUse === 'string' && row.specialUse.toLowerCase() === '\\sent')
+    ?? mailboxes.find((row) => /^(?:sent|sent items|sent messages|sent mail)$/i.test(String(row.name)))
+  return sent ? String(sent.path) : 'Sent'
 }

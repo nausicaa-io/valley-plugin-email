@@ -112,11 +112,22 @@ describe('durable classification queue', () => {
   })
 })
 
-it('reserves one shared rolling allowance across two queues and skips incomplete messages', async () => {
+it('sorts a message whose body was deferred and skips one that could not be downloaded', async () => {
+  const { mock, queue, ids } = await setup(2)
+  mock.api.ai.classify = vi.fn(async () => answer)
+  await mock.api.data.dataset('messages').update({ id: ids[0] }, { complete: false })
+  await mock.api.data.dataset('messages').update({ id: ids[1] }, { complete: false, from: '' })
+  await queue.enqueue(ids)
+  await vi.waitFor(async () => expect(await mock.api.data.dataset('classification_jobs').count({ status: 'completed' })).toBe(1))
+  expect(await mock.api.data.dataset('classification_jobs').count({ messageId: ids[1] })).toBe(0)
+  expect(await mock.api.data.dataset('assignments').get({ id: ids[0] })).toMatchObject({ categoryId: 'canopy' })
+})
+
+it('reserves one shared rolling allowance across two queues and skips messages that could not be downloaded', async () => {
   const { mock, queue, ids, groups } = await setup(120)
   await groups.update(config => { config.dailyLimit = 10 })
   mock.api.ai.classify = vi.fn(async () => answer)
-  await mock.api.data.dataset('messages').update({ id: ids[0] }, { complete: false })
+  await mock.api.data.dataset('messages').update({ id: ids[0] }, { complete: false, from: '' })
   const other = createClassificationQueue(mock.api, groups, () => {}, async () => {})
   disposers.push(other.dispose)
   await Promise.all([queue.enqueue(ids.slice(0, 70), true), other.enqueue(ids.slice(60), true)])

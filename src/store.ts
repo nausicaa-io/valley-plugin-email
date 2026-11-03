@@ -5,7 +5,7 @@ import { createContactResolution } from './contactResolution'
 import { createEmailProjections } from './projections'
 import { createClassificationQueue, type ClassificationProgress } from './classificationQueue'
 import { vipAddresses } from './grouping'
-import { createSmartGroupsStore, groupFilter, starterGroups, type SmartGroupsStore } from './smartGroups'
+import { createSmartGroupsStore, currentGroupFilter, groupFilter, starterGroups, type SmartGroupsStore } from './smartGroups'
 import { createSyncController } from './syncController'
 import { createAccountsController } from './accountsController'
 import { createDraftController } from './draftController'
@@ -220,6 +220,12 @@ function createStore(api: ValleyPluginApi): EmailStore {
   let accountsLoaded!: () => void
   const smartGroups = createSmartGroupsStore(api, () => state.accounts, new Promise<void>(resolve => { accountsLoaded = resolve }), () => starterGroups(key => uiText(key)))
   const classification = createClassificationQueue(api, smartGroups, classification => set({ classification }), async () => { messagesController.invalidateMessages(); await loadMessages() })
+  const setFilters = (filters: EmailFilters): void => { messagesController.invalidateMessages(); set({ filters, messages: [], cursor: undefined }); void api.settings.set('filters', filters).catch(report); void loadMessages() }
+  // Saved group filters follow the groups: a removed group or a stale subtree never leaves the list filtered on ids that match nothing.
+  let groupsLoaded = false
+  const reconcileFilters = (): void => { if (disposed || !groupsLoaded) return; const next = currentGroupFilter(smartGroups.get(), state.filters); if (next !== state.filters) setFilters(next) }
+  void smartGroups.ready.then(() => { groupsLoaded = true; reconcileFilters() })
+  const offGroups = smartGroups.subscribe(reconcileFilters)
   const projections = createEmailProjections(api, async () => { messagesController.invalidateMessages(); await loadMessages() })
   const offSync = mail.onSync((event) => {
     if (event.status === 'done') syncController.noteSynced(event.accountId, event.folder)
@@ -247,7 +253,7 @@ function createStore(api: ValleyPluginApi): EmailStore {
     subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener) }, getSnapshot: () => state,
     dispose: () => {
       if (draining) return draining
-      disposed = true; messagesController.invalidateSelection(); contacts.clearSelection(); mailboxController.dispose(); offSync(); offSettings(); smartGroups.dispose(); listeners.clear()
+      disposed = true; messagesController.invalidateSelection(); contacts.clearSelection(); mailboxController.dispose(); offSync(); offSettings(); offGroups(); smartGroups.dispose(); listeners.clear()
       draining = Promise.allSettled([classification.dispose(), projections.dispose(), contacts.dispose(), syncController.dispose(), draftController.dispose(), mailSession.dispose()]).then((results) => {
         const failure = results.find((result) => result.status === 'rejected')
         if (failure?.status === 'rejected') throw failure.reason
@@ -259,7 +265,7 @@ function createStore(api: ValleyPluginApi): EmailStore {
     openMessage: (message) => { if (!disposed && state.composing) releaseComposeTab(); openMessage(message) }, sync, syncIfStale, act, setPlainText: (message, htmlContent, plainText) => set({ bodyOverride: { key: messageKey(message), htmlContent, plainText } }), dismissError: () => set({ error: null }),
     retry: async () => { set({ error: null }); await refreshAccounts(); await sync() },
     setQuery,
-    setFilters: filters => { messagesController.invalidateMessages(); set({ filters, messages: [], cursor: undefined }); void api.settings.set('filters', filters).catch(report); void loadMessages() },
+    setFilters,
     selectGroup: (accountId, groupId) => selectView('recent', state.selectedFolder, { accountId, groupId }),
     toggleVip: async address => {
       const values = vipAddresses(api), key = address.address.trim().toLowerCase()

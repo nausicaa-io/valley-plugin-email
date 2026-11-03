@@ -150,6 +150,27 @@ async function writeOperations(scope: EmailStoreContext, operations: DatasetTran
   await flush()
 }
 
+/** Delete the message rows (with their recipients) of these ids that no folder of any account holds any more. */
+async function dropUnreferenced(scope: EmailStoreContext, ids: string[]): Promise<void> {
+  for (let index = 0; index < ids.length; index += 100) {
+    const slice = [...new Set(ids.slice(index, index + 100))]
+    const held = new Set((await queryAll(scope, scope.datasets.folderMessages, { messageId: { in: slice } }, ['messageId'])).map(row => String(row.messageId)))
+    const orphaned = slice.filter(id => !held.has(id))
+    if (!orphaned.length) continue
+    const recipients = await queryAll(scope, scope.datasets.recipients, { messageId: { in: orphaned } }, ['messageId', 'kind', 'position'])
+    await writeOperations(scope, [
+      ...orphaned.map(id => ({ dataset: scope.datasets.messages, operation: 'delete' as const, key: { id } })),
+      ...recipients.map(row => ({ dataset: scope.datasets.recipients, operation: 'delete' as const, key: { messageId: String(row.messageId), kind: String(row.kind), position: Number(row.position) } }))
+    ])
+  }
+}
+
+/** The recipient rows folderOperations writes for one stored message row. */
+function recipientRows(row: DatasetRecord): DatasetRecord[] {
+  const split = (value: unknown) => typeof value === 'string' ? value.split(',').map(address => address.trim()).filter(Boolean) : []
+  return [...split(row.to).map((address, position) => ({ messageId: String(row.id), kind: 'to', position, address })), ...split(row.cc).map((address, position) => ({ messageId: String(row.id), kind: 'cc', position, address }))]
+}
+
 export async function readAccounts(scope: EmailStoreContext): Promise<EmailAccount[]> {
   const text = await scope.data.files.readText('accounts.json')
   if (text === null) return []
@@ -181,13 +202,20 @@ export async function getAccount(scope: EmailStoreContext, accountId: string): P
 export async function removeAccountFiles(scope: EmailStoreContext, accountId: string): Promise<EmailAccount[]> {
   const accounts = (await readAccounts(scope)).filter((a) => a.id !== accountId)
   await writeAccounts(scope, accounts)
-  const [memberships, messages] = await Promise.all([
+  const [memberships, messages, mailboxes] = await Promise.all([
     queryAll(scope, scope.datasets.folderMessages, { accountId }, ['folder', 'uid']),
-    queryAll(scope, scope.datasets.messages, { accountId }, ['id'])
+    queryAll(scope, scope.datasets.messages, { accountId }, ['id']),
+    queryAll(scope, scope.datasets.mailboxes, { accountId }, ['path'])
   ])
+  const ids = messages.map((entry) => String(entry.id))
+  const recipients: DatasetRecord[] = []
+  for (let index = 0; index < ids.length; index += 100) recipients.push(...await queryAll(scope, scope.datasets.recipients, { messageId: { in: ids.slice(index, index + 100) } }, ['messageId', 'kind', 'position']))
+  // Sync states stay: a restored account keeps its cache only while its folders' epochs are still known.
   const operations = [
     ...memberships.map((entry) => ({ dataset: scope.datasets.folderMessages, operation: 'delete' as const, key: { accountId, folder: String(entry.folder), uid: Number(entry.uid) } })),
-    ...messages.map((entry) => ({ dataset: scope.datasets.messages, operation: 'delete' as const, key: { id: String(entry.id) } }))
+    ...ids.map((id) => ({ dataset: scope.datasets.messages, operation: 'delete' as const, key: { id } })),
+    ...recipients.map((row) => ({ dataset: scope.datasets.recipients, operation: 'delete' as const, key: { messageId: String(row.messageId), kind: String(row.kind), position: Number(row.position) } })),
+    ...mailboxes.map((row) => ({ dataset: scope.datasets.mailboxes, operation: 'delete' as const, key: { accountId, path: String(row.path) } }))
   ]
   await writeOperations(scope, operations)
   return accounts
@@ -215,6 +243,7 @@ export async function restoreAccountFiles(scope: EmailStoreContext, restore: Acc
   await writeAccounts(scope, accounts)
   await writeOperations(scope, [
     ...restore.messages.map((values) => ({ dataset: scope.datasets.messages, operation: 'insert' as const, values })),
+    ...restore.messages.flatMap(recipientRows).map((values) => ({ dataset: scope.datasets.recipients, operation: 'upsert' as const, values })),
     ...restore.folderMessages.map((values) => ({ dataset: scope.datasets.folderMessages, operation: 'insert' as const, values }))
   ])
   return accounts
@@ -338,6 +367,9 @@ export async function mergeFolder(
   for (const operation of operations) if (operation.dataset === scope.datasets.folderMessages && operation.values && !Array.isArray(operation.values)) Object.assign(operation.values, folderProjection(folder, typeof mailbox?.specialUse === 'string' ? mailbox.specialUse : undefined, operation.values.flags as string[]))
   await writeOperations(scope, operations)
   const stored = new Map(memberships.map(row => [Number(row.uid), row]))
+  // A UID whose content changed points at a new message row; the old row goes once nothing holds it.
+  const now = new Map(identified.map(message => [message.uid, message.logicalId]))
+  await dropUnreferenced(scope, memberships.filter(row => now.has(Number(row.uid)) && now.get(Number(row.uid)) !== String(row.messageId)).map(row => String(row.messageId)))
   await projectAssignments(scope, [...new Set(operations.flatMap(({ dataset, operation, values }) => {
     if (operation !== 'upsert' || !values || Array.isArray(values)) return []
     if (dataset === scope.datasets.messages) return [String(values.id)]
@@ -402,6 +434,7 @@ export async function moveCachedMessage(
     operations.push(...folderOperations(scope, accountId, destinationFolder, destination, merged))
   }
   await writeOperations(scope, operations)
+  if (message?.logicalId) await dropUnreferenced(scope, [message.logicalId])
   return remaining
 }
 

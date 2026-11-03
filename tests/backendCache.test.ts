@@ -392,9 +392,58 @@ describe('incremental folder sync', () => {
     await mergeFolder(scope, 'station', 'INBOX', [{ ...fetched[0], text: 'Moss survey' }])
     const operations = written(transaction)
     expect(operations.filter(operation => operation.dataset === 'messages' && operation.operation === 'upsert')).toEqual([expect.objectContaining({ values: expect.objectContaining({ text: 'Moss survey' }) })])
-    expect(operations.filter(operation => operation.dataset === 'recipients')).toHaveLength(1)
+    expect(operations.filter(operation => operation.dataset === 'recipients').map(operation => operation.operation)).toEqual(['upsert', 'delete'])
     expect(operations.filter(operation => operation.dataset === 'folder_messages')).toEqual([expect.objectContaining({ operation: 'upsert', values: expect.objectContaining({ uid: 7 }) })])
     expect((await readMessage(scope, { accountId: 'station', folder: 'INBOX', uid: 7 }))?.text).toBe('Moss survey')
+    // The replaced content leaves no message row or recipient behind.
+    expect((await scope.data.dataset('messages').query({ limit: 100 })).rows.map(row => row.text).sort()).toEqual(['Moss survey', 'Rare forest orchid'])
+    expect((await scope.data.dataset('recipients').query({ limit: 100 })).rows).toHaveLength(3)
+  })
+
+  it('keeps the replaced content while another folder still holds it', async () => {
+    await mergeFolder(scope, 'station', 'INBOX', fetched)
+    await mergeFolder(scope, 'station', 'Archive', [{ ...fetched[0], uid: 70 }])
+    await mergeFolder(scope, 'station', 'INBOX', [{ ...fetched[0], text: 'Moss survey' }])
+    expect((await readMessage(scope, { accountId: 'station', folder: 'Archive', uid: 70 }))?.text).toBe(message.text)
+    expect((await scope.data.dataset('messages').query({ limit: 100 })).rows).toHaveLength(3)
+  })
+
+  it('drops a message moved without a destination UID once no folder holds it', async () => {
+    await mergeFolder(scope, 'station', 'INBOX', fetched)
+    await moveCachedMessage(scope, 'station', 'INBOX', 'Archive', 7)
+    expect((await scope.data.dataset('messages').query({ limit: 100 })).rows.map(row => row.messageId)).toEqual(['<moss@example.test>'])
+    expect((await scope.data.dataset('recipients').query({ limit: 100 })).rows).toHaveLength(2)
+  })
+
+  it('removes the cached messages, sync state and row of a mailbox the server no longer lists, and prunes nothing without INBOX', async () => {
+    await mergeFolder(scope, 'station', 'INBOX', [fetched[0]])
+    await mergeFolder(scope, 'station', 'Projects', [fetched[1], { ...fetched[0], uid: 30 }])
+    await mergeFolder(scope, 'station', 'Sent', [{ ...message, uid: 0x1_0000_0001, messageId: '<local@example.test>' }])
+    await scope.data.dataset('sync_state').upsert({ accountId: 'station', folder: 'Projects', uidValidity: 3, cursor: '8', lastSyncAt: '2026-10-01T00:00:00.000Z' })
+    const inbox = { path: 'INBOX', name: 'INBOX', selectable: true }
+    await cacheMailboxes(scope, 'station', [inbox, { path: 'Projects', name: 'Projects', selectable: true }])
+    await cacheMailboxes(scope, 'station', [{ path: 'Projects', name: 'Projects', selectable: true }])
+    expect((await readFolder(scope, 'station', 'Projects')).map(entry => entry.uid).sort((a, b) => a - b)).toEqual([8, 30])
+    await cacheMailboxes(scope, 'station', [inbox])
+    expect((await cachedMailboxes(scope, 'station')).map(row => row.path)).toEqual(['INBOX'])
+    expect(await readFolder(scope, 'station', 'Projects')).toEqual([])
+    expect(await readFolder(scope, 'station', 'Sent')).toEqual([])
+    expect(await scope.data.dataset('sync_state').get({ accountId: 'station', folder: 'Projects' })).toBeNull()
+    expect((await scope.data.dataset('messages').query({ limit: 100 })).rows.map(row => row.messageId)).toEqual([message.messageId])
+    expect((await scope.data.dataset('recipients').query({ limit: 100 })).rows).toHaveLength(1)
+    expect((await readFolder(scope, 'station', 'INBOX')).map(entry => entry.uid)).toEqual([7])
+  })
+
+  it('removes an account with its recipients and mailboxes, leaving other accounts alone', async () => {
+    await mergeFolder(scope, 'station', 'INBOX', fetched)
+    await mergeFolder(scope, 'other', 'INBOX', fetched)
+    await cacheMailboxes(scope, 'station', [{ path: 'INBOX', name: 'INBOX', selectable: true }])
+    await cacheMailboxes(scope, 'other', [{ path: 'INBOX', name: 'INBOX', selectable: true }])
+    await upsertAccount(scope, account)
+    await removeAccountFiles(scope, 'station')
+    expect((await scope.data.dataset('messages').query({ limit: 100 })).rows.every(row => row.accountId === 'other')).toBe(true)
+    expect((await scope.data.dataset('recipients').query({ limit: 100 })).rows).toHaveLength(3)
+    expect((await scope.data.dataset('mailboxes').query({ limit: 100 })).rows.map(row => row.accountId)).toEqual(['other'])
   })
 
   it('re-projects only stale membership rows unless the special use changed', async () => {

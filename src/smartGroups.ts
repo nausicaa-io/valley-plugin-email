@@ -288,6 +288,16 @@ export function groupFilter(config: SmartGroupsConfig, accountId: string, groupI
   return path ? { categoryId: groupId, categoryIds: descendantIds(path[path.length - 1]), categoryAccountId: accountId } : noGroupFilter
 }
 
+/**
+ * The saved filters with their group part resolved against the current groups: an open group's current subtree, nothing once the
+ * group or its account is gone, and no subtree or account left over from an older picker that saved them without a group.
+ */
+export function currentGroupFilter(config: SmartGroupsConfig, filters: EmailFilters): EmailFilters {
+  if (filters.categoryIds === undefined && filters.categoryAccountId === undefined) return filters
+  const next: EmailFilters = { ...filters, ...(filters.categoryAccountId && filters.categoryId ? groupFilter(config, filters.categoryAccountId, filters.categoryId) : { categoryIds: undefined, categoryAccountId: undefined }) }
+  return JSON.stringify(next) === JSON.stringify(filters) ? filters : next
+}
+
 /** "Always put mail from" chips: `name@domain` (address), `@domain` (domain), `contact:<id>:<name>` (Contacts entry). */
 export const ruleChip = (rule: SmartGroupRule): string => rule.kind === 'contact' ? `contact:${encodeURIComponent(rule.contactId)}:${rule.label}` : rule.kind === 'domain' ? `@${rule.value}` : rule.value
 export function chipRule(chip: string): SmartGroupRule | null {

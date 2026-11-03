@@ -29,7 +29,7 @@ export function fakeMessage(uid: number, subject: string, parts: FakePart[], fla
   return { uid, flags, internalDate: '21-Oct-2026 08:00:00 +0000', header, parts, multipart: 'MIXED', raw: join([header, body]), bodystructure: `(${parts.map(leafStructure).join('')} "MIXED" ("BOUNDARY" "${boundary}") NIL NIL NIL)` }
 }
 
-export interface FakeFolder { uidValidity: number; messages: FakeMessage[] }
+export interface FakeFolder { uidValidity: number; messages: FakeMessage[]; specialUse?: string }
 export interface FakeModes { failUids?: number[]; search?: 'ok' | 'no' | 'empty'; listing?: 'ok' | 'empty'; select?: 'ok' | 'empty' | 'no-uidvalidity'; sizeLie?: number[] }
 
 /** A scripted IMAP server behind the plugin network API; it records commands and the body bytes it sent. */
@@ -91,7 +91,7 @@ export function imapFolderFake(folders: Record<string, FakeFolder>, modes: FakeM
       target.messages.push(moved); selected.messages.splice(index, 1)
       return send(`* OK [COPYUID ${target.uidValidity} ${match[1]} ${moved.uid}] moved\r\n`, `* ${index + 1} EXPUNGE\r\n`, `${tag} OK moved\r\n`)
     }
-    if (command === 'LIST "" "*"') return send(...Object.keys(folders).map(name => `* LIST (${name === 'Trash' ? '\\Trash' : name === 'Sent' ? '\\Sent' : '\\HasNoChildren'}) "/" "${name}"\r\n`), `${tag} OK listed\r\n`)
+    if (command === 'LIST "" "*"') return send(...Object.keys(folders).map(name => `* LIST (${folders[name].specialUse ?? (name === 'Trash' ? '\\Trash' : name === 'Sent' ? '\\Sent' : '\\HasNoChildren')}) "/" "${name}"\r\n`), `${tag} OK listed\r\n`)
     return send(`${tag} BAD unsupported\r\n`)
   }
   let input = ''

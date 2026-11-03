@@ -17,8 +17,9 @@ const inbox = { accountIds: [], view: 'folder', folder: 'INBOX', query: '' }
 let dispose: (() => void | Promise<void>) | undefined
 afterEach(async () => { cleanup(); await dispose?.(); dispose = undefined })
 
-async function setup(activeInstance: string) {
+async function setup(activeInstance: string, filters?: Record<string, unknown>) {
   const mock = createMailMock({ manifest: { id: 'email' } })
+  if (filters) await mock.api.settings.set('filters', filters)
   mock.mail.listAccounts = async () => ({ ok: true, data: { accounts: [{ id: 'one', provider: 'pureemail', address: 'one@example.com', displayName: 'one',
     imap: { host: 'example.com', port: 993, secure: true }, smtp: { host: 'example.com', port: 465, secure: true }, createdAt: 1 }] } })
   mock.mail.listFolders = async () => ({ ok: true, data: { folders: ['INBOX'], mailboxes: [{ path: 'INBOX', name: 'Inbox', specialUse: '\\Inbox', selectable: true, cachedTotal: 0, cachedUnread: 0 }] } })
@@ -32,6 +33,19 @@ async function setup(activeInstance: string) {
   await getStore().whenReady; await getStore().smartGroups.ready
   return { mock, main, activate, lastQuery }
 }
+
+describe('saved group filters', () => {
+  it.each([
+    ['a stale subtree of a group that still exists', { spam: 'all', categoryId: 'receipts', categoryIds: ['receipts'], categoryAccountId: 'one' }, { spam: 'all', categoryId: 'receipts', categoryIds: ['receipts', 'billing'], categoryAccountId: 'one' }],
+    ['a removed group', { spam: 'all', categoryId: 'gone', categoryIds: ['gone'], categoryAccountId: 'one' }, { spam: 'all' }],
+    ['a subtree saved without a group by the older picker', { spam: 'all', categoryIds: ['receipts'], categoryAccountId: 'one' }, { spam: 'all' }]
+  ])('replaces %s once the groups are loaded', async (_case, saved, expected) => {
+    const { mock, lastQuery } = await setup('tab-a', saved)
+    await waitFor(() => expect(mock.api.settings.get().filters).toEqual(expected))
+    expect(getStore().getSnapshot().filters).toEqual(expected)
+    await waitFor(() => expect(lastQuery().filters).toEqual(expected))
+  })
+})
 
 describe('Smart groups per Email tab', () => {
   it('keeps each tab on its own group, out of the global filters, and brings both back after a reload', async () => {

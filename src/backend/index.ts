@@ -2,7 +2,7 @@ import { createTranslator, setTranslator } from './localization'
 import { z } from 'zod'
 import type { PluginDataApi, PluginBackendApi, PluginBackendOperationContext } from '@valley/plugin-sdk'
 import type { EmailAccount, CachedMessage } from '../mailTypes'
-import { cacheMailboxes, cachedMailboxes, parseEmailAddresses, queryMessages, readMessage } from './query'
+import { cacheMailboxes, cachedMailboxes, cachedSentFolder, parseEmailAddresses, queryMessages, readMessage } from './query'
 import { readAccounts as readEmailAccounts, upsertAccount, getAccount as getEmailAccount, removeAccountFiles, readFolder, mergeFolder, establishFolderEpoch, appendMessage, folderCacheStats, updateMessageFlags, moveCachedMessage, emailStoreContext, captureAccountRestore, restoreAccountFiles, forgetCachedMessage, cachedFolderHeaders, pruneFolder, cachedFolderUids, removeFromFolder, dropLocalCopies, readStructure, storeOpenedBody, type EmailStoreContext } from './cache'
 import { accountEndpoint, credentialName, MAIL_CREDENTIAL_STORE, verifyImap, verifySmtp, mailDiagnostic, listFolders, fetchFolder, fetchMessageContent, fetchAttachmentSlice, appendSentMessage, sendMail, MailSendError, MailActionUncertain, applyMessageAction as applyRemoteMessageAction, type MailTransportApi } from './transport'
 import { encodeBytes } from './encoding'
@@ -17,7 +17,7 @@ interface MailRpc {
 }
 
 export interface MailBackendApi extends MailTransportApi { services?: MailAutomationServices; notifications?: PluginBackendApi['notifications']; lifecycle?: PluginBackendApi['lifecycle']; settings?: PluginBackendApi['settings']; data: PluginDataApi; rpc: MailRpc; i18n?: { t(key: string, params?: Record<string, string | number>): string } }
-interface MailBackendContext extends EmailStoreContext, MailTransportApi { /** The last opened body too large for the cache, as decoded pieces. */ opened?: Map<string, { text?: string[]; html?: string[] }>; services?: MailAutomationServices & Partial<Pick<PluginBackendApi['services'], 'emit'>>; notifications?: PluginBackendApi['notifications']; settings?: PluginBackendApi['settings']; rpc: MailRpc; t: ReturnType<typeof createTranslator> }
+interface MailBackendContext extends EmailStoreContext, MailTransportApi { /** The last opened body too large for the cache, as decoded pieces. */ opened?: Map<string, { text?: string[]; html?: string[] }>; /** Where the bounded UID SEARCH of older cached UIDs continues, per folder; a restart starts again from the oldest. */ reconcileCursors?: Map<string, { uidValidity: number; after: number }>; services?: MailAutomationServices & Partial<Pick<PluginBackendApi['services'], 'emit'>>; notifications?: PluginBackendApi['notifications']; settings?: PluginBackendApi['settings']; rpc: MailRpc; t: ReturnType<typeof createTranslator> }
 
 class RemoteMailCacheError extends Error {
   constructor(message: string, readonly result: unknown) { super(message) }
@@ -208,6 +208,7 @@ const methods = {
       scope.rpc.emit('sync', { accountId: p.accountId, folder: p.folder, status: 'start' })
       try {
         const previous = await scope.data.dataset('sync_state').get({ accountId: p.accountId, folder: p.folder })
+        const cursorKey = JSON.stringify([p.accountId, p.folder])
         let established: boolean | undefined
         // The folder's epoch is settled right after SELECT, before any batch is stored; a SELECT without UIDVALIDITY never wipes a known folder.
         const epoch = async (value: number | undefined): Promise<void> => {
@@ -215,10 +216,12 @@ const methods = {
           established = await establishFolderEpoch(scope, p.accountId, p.folder, value)
         }
         const synced = await fetchFolder(scope, account, p.folder, p.limit, async (uids, value) => previous?.uidValidity === value ? cachedFolderHeaders(scope, p.accountId, p.folder, uids, value) : new Map(), {
-          epoch, store: async (batch) => { await mergeFolder(scope, p.accountId, p.folder, batch) }, cachedUids: (value) => cachedFolderUids(scope, p.accountId, p.folder, value)
+          epoch, store: async (batch) => { await mergeFolder(scope, p.accountId, p.folder, batch) }, cachedUids: (value) => cachedFolderUids(scope, p.accountId, p.folder, value),
+          reconcileFrom: (value) => { const cursor = scope.reconcileCursors?.get(cursorKey); return { after: cursor?.uidValidity === value ? cursor.after : 0, recheck: pendingRemoval(previous?.pendingRemoval, value) } }
         })
         const uidValidity = synced.uidValidity
         if (established === undefined) await epoch(uidValidity)
+        if (synced.reconciledThrough !== undefined && uidValidity !== undefined) scope.reconcileCursors?.set(cursorKey, { uidValidity, after: synced.reconciledThrough })
         const messages = [...synced.messages, ...synced.stored ?? []]
         let count = await mergeFolder(scope, p.accountId, p.folder, synced.messages)
         const earlier = pendingRemoval(previous?.pendingRemoval, uidValidity)
@@ -337,7 +340,7 @@ const methods = {
         flags: ['\\Seen'],
         hasAttachments: false
       }
-      try { await automatic?.complete(); await appendMessage(scope, p.accountId, stored?.folder ?? 'Sent', sent) }
+      try { await automatic?.complete(); await appendMessage(scope, p.accountId, stored?.folder ?? await cachedSentFolder(scope, p.accountId), sent) }
       catch { throw new RemoteMailCacheError(scope.t('email.backend.sentCacheFailed'), { messageId }) }
       return { messageId }
     }),
@@ -492,7 +495,7 @@ export function register(api: MailBackendApi): () => Promise<void> {
   let draining: Promise<void> | undefined
   const scope: MailBackendContext = {
     ...emailStoreContext(api.data), network: api.network, credentials: api.credentials, accounts: api.accounts, services: api.services, t, notifications: api.notifications, settings: api.settings,
-    rpc: { handle: api.rpc.handle, emit: (name, payload) => { if (!disposed) api.rpc.emit(name, payload) } }, opened: new Map()
+    rpc: { handle: api.rpc.handle, emit: (name, payload) => { if (!disposed) api.rpc.emit(name, payload) } }, opened: new Map(), reconcileCursors: new Map()
   }
   const off = [...Object.entries(methods), ...Object.entries(openedMail)].map(([name, method]) => {
     const handler = async (payload: unknown, operation?: PluginBackendOperationContext) => {

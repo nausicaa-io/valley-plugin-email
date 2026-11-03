@@ -6,7 +6,7 @@ import config from '../config.json'
 import { createClassificationQueue } from '../src/classificationQueue'
 import { emailStoreContext, mergeFolder } from '../src/backend/cache'
 import {
-  addGroup, adoptAccountKeys, chipRule, createSmartGroupsStore, fillStarters, ruleChip, decideSmartGroup, findGroupPath, groupFilter, migrateLegacyGrouping, moveGroup, normalizeSmartGroups, removeGroup, SMART_GROUPS_FILE,
+  addGroup, adoptAccountKeys, chipRule, createSmartGroupsStore, currentGroupFilter, fillStarters, ruleChip, decideSmartGroup, findGroupPath, groupFilter, migrateLegacyGrouping, moveGroup, normalizeSmartGroups, removeGroup, SMART_GROUPS_FILE,
   type SmartGroup, type SmartGroupClassifier, type SmartGroupsConfig
 } from '../src/smartGroups'
 
@@ -90,6 +90,19 @@ describe('smart group configuration', () => {
     expect(groups[1].children.map(item => item.id)).toEqual(['dinner', 'invitations', 'photos'])
     expect(groups[0].children.map(item => item.id)).toEqual(['billing'])
     expect(groupFilter({ ...normalizeSmartGroups({}), accounts: { forest: { groups } } }, 'forest', 'family')).toEqual({ categoryId: 'family', categoryIds: ['family', 'dinner', 'invitations', 'photos'], categoryAccountId: 'forest' })
+  })
+
+  it('resolves saved group filters against the current groups and drops leftovers of the older picker', () => {
+    const config = { ...normalizeSmartGroups({}), accounts: { forest: { groups: tree() } } }
+    const saved = { spam: 'default' as const, categoryId: 'family', categoryIds: ['family', 'stale'], categoryAccountId: 'forest' }
+    expect(currentGroupFilter(config, saved)).toEqual({ spam: 'default', ...groupFilter(config, 'forest', 'family') })
+    expect(currentGroupFilter(config, { ...saved, categoryId: 'gone' })).toEqual({ spam: 'default' })
+    expect(currentGroupFilter(config, { ...saved, categoryAccountId: 'wetland' })).toEqual({ spam: 'default' })
+    expect(currentGroupFilter(config, { categoryId: 'uncategorized', categoryIds: ['receipts'] })).toEqual({ categoryId: 'uncategorized' })
+    const current = { spam: 'all' as const, ...groupFilter(config, 'forest', 'family') }
+    expect(currentGroupFilter(config, current)).toBe(current)
+    const plain = { vip: 'vip' as const }
+    expect(currentGroupFilter(config, plain)).toBe(plain)
   })
 
   it('migrates the former global categories into every account with the same ids', () => {

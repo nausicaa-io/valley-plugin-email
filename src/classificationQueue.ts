@@ -118,7 +118,9 @@ export function createClassificationQueue(api: ValleyPluginApi, smartGroups: Sma
     const since = new Date(Date.now() - 86400000).toISOString()
     const selected = [...new Set(ids)].slice(0, 2000)
     for (let offset = 0; offset < selected.length; offset += 100) {
-      const page = await messages.query({ where: { id: { in: selected.slice(offset, offset + 100) }, complete: true, ...(automatic ? { isSpam: false, exists: { dataset: 'folder_messages', on: { id: 'messageId', accountId: 'accountId' }, where: { unread: true, folder: 'INBOX', spam: false } } } : {}) }, select: ['id', 'accountId', 'contentRevision'], limit: 100 })
+      // A message whose body download was deferred (F2) is sorted by its headers and the text it has; one that could not be
+      // downloaded at all has no sender and stays unsorted.
+      const page = await messages.query({ where: { id: { in: selected.slice(offset, offset + 100) }, or: [{ complete: true }, { from: { gt: '' } }], ...(automatic ? { isSpam: false, exists: { dataset: 'folder_messages', on: { id: 'messageId', accountId: 'accountId' }, where: { unread: true, folder: 'INBOX', spam: false } } } : {}) }, select: ['id', 'accountId', 'contentRevision'], limit: 100 })
       const manual = await assignments.query({ where: { id: { in: page.rows.map(row => String(row.id)) }, manual: true }, select: ['id'], limit: 100 })
       const candidates: DatasetRecord[] = []
       for (const message of page.rows) {

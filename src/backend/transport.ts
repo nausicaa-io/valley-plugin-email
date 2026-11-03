@@ -29,6 +29,8 @@ export const MAIL_SYNC_LIMITS = {
   headerBytes: 64 * 1024,
   /** Largest single body part fetched on demand. */
   openPartBytes: 16 * 1024 * 1024,
+  /** Cached UIDs below the listed window checked with UID SEARCH per sync; the next sync continues after the last one. */
+  reconcileUids: 1000,
   /** Largest slice of an attachment returned by one request. */
   attachmentSliceBytes: 3 * 1024 * 1024
 } as const
@@ -565,6 +567,8 @@ export interface FolderSyncHooks {
   store?(messages: CachedMessage[]): Promise<void>
   /** Cached server UIDs of this folder in the current epoch, for reconciliation. */
   cachedUids?(uidValidity: number): Promise<number[]>
+  /** Where the bounded check of cached UIDs below the listed window continues, and the UIDs a pending removal asks to check again. */
+  reconcileFrom?(uidValidity: number): { after?: number; recheck?: number[] | null }
 }
 
 export interface FolderSyncResult {
@@ -579,6 +583,8 @@ export interface FolderSyncResult {
   removed?: number[]
   /** How many cached UIDs the reconciliation checked. */
   checked?: number
+  /** The last UID of the older range checked by UID SEARCH this time (0 once the range wrapped); absent when nothing older was searched or a recheck ran. */
+  reconciledThrough?: number
 }
 
 const compactSet = (uids: number[]): string[] => {
@@ -674,11 +680,32 @@ export async function fetchFolder(api: MailTransportApi, account: EmailAccount, 
     if (hooks.cachedUids && uidValidity !== undefined && consistent && !broken) {
       try {
         const candidates = [...new Set((await hooks.cachedUids(uidValidity)).filter(uid => Number.isSafeInteger(uid) && uid >= 1 && uid <= 0xffffffff))].sort((a, b) => a - b)
-        const present = new Set<number>()
-        for (let index = 0; index < candidates.length; index += 5000) for (const uid of searchUids(await connection.command(`UID SEARCH UID ${compactSet(candidates.slice(index, index + 5000)).join(',')}`))) present.add(uid)
-        const asked = new Set(candidates)
-        // The server must report every cached UID it just listed, and nothing it was not asked about; otherwise nothing is removed.
-        if (listing.every(fields => !asked.has(fetchedUid(fields)) || present.has(fetchedUid(fields))) && [...present].every(uid => asked.has(uid))) { result.removed = candidates.filter(uid => !present.has(uid)); result.checked = candidates.length }
+        // The listing holds the highest UIDs of the folder (all of them when it is no larger than the window): a cached UID at or
+        // above its lowest UID that it does not list is gone without asking. Only older cached UIDs need UID SEARCH, a bounded
+        // slice per sync that continues where the previous sync stopped, or exactly the UIDs a pending removal waits on.
+        const listed = new Set(listing.map(fetchedUid))
+        const floor = total > listing.length ? Math.min(...listed) : 0
+        const window = candidates.filter(uid => uid >= floor), older = candidates.filter(uid => uid < floor)
+        const removed = window.filter(uid => !listed.has(uid))
+        let checked = window.length, through: number | undefined
+        if (older.length) {
+          const from = hooks.reconcileFrom?.(uidValidity) ?? {}
+          const recheck = new Set(from.recheck ?? [])
+          let slice = recheck.size ? older.filter(uid => recheck.has(uid)).slice(0, MAIL_SYNC_LIMITS.reconcileUids) : []
+          if (!slice.length) {
+            slice = older.filter(uid => uid > (from.after ?? 0)).slice(0, MAIL_SYNC_LIMITS.reconcileUids)
+            if (!slice.length) slice = older.slice(0, MAIL_SYNC_LIMITS.reconcileUids)
+            through = slice[slice.length - 1] < older[older.length - 1] ? slice[slice.length - 1] : 0
+          }
+          // The lowest listed UID goes along as a canary: the server must report it, and nothing it was not asked about.
+          const asked = new Set([...slice, floor])
+          const present = new Set(searchUids(await connection.command(`UID SEARCH UID ${compactSet([...asked]).join(',')}`)))
+          if (!present.has(floor) || [...present].some(uid => !asked.has(uid))) throw new Error(t('email.backend.mailboxChanged'))
+          removed.push(...slice.filter(uid => !present.has(uid)))
+          checked += slice.length
+        }
+        result.removed = removed; result.checked = checked
+        if (through !== undefined) result.reconciledThrough = through
       } catch { /* An unverified listing removes nothing. */ }
     }
     return result
