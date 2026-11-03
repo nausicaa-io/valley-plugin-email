@@ -16,7 +16,7 @@ import { api } from './runtime'
  * reopening the tab; a released draft stays closed until Compose or its Drafts entry opens it. Closing the tab releases the
  * saved record at once; reopening the closed tab in the same session takes the draft back.
  */
-export interface ParkedEmailTab { selection: EmailSelection; navigation?: EmailNavigation; title?: string }
+export interface ParkedEmailTab { selection: EmailSelection; navigation?: EmailNavigation; title?: string; afterFocus?: () => Promise<void> }
 
 export interface EmailTabs {
   /** Instance of the tab that shows the live mailbox; undefined for a tab without an instance. */
@@ -33,8 +33,8 @@ export interface EmailTabs {
   release(): void
   /** The live mailbox's tab title changed; the title of a tab without an instance is kept for the next start. */
   titled(title: string): void
-  /** Open a selection in a new Email tab and leave the current tab as it is. */
-  openNew(selection: EmailSelection, title?: string): void
+  /** Open a selection in a new Email tab and leave the current tab as it is; `afterFocus` runs once that tab has the live mailbox. */
+  openNew(selection: EmailSelection, title?: string, afterFocus?: () => Promise<void>): void
   subscribe(listener: () => void): () => void
   dispose(): void
 }
@@ -227,6 +227,7 @@ export function createEmailTabs(api: ValleyPluginApi, store: EmailStore): EmailT
         catch (error) { if (!conflict(error)) restored = await fresh(entry.navigation.selection) }
       } else restored = await fresh(entry.selection)
       if (restored && focused === tab && owns(tab)) store.setComposing(true)
+      if (restored && focused === tab && entry.afterFocus) await entry.afterFocus()
     }
     // A tab seen for the first time keeps the live mailbox; its saved state, if any, arrives through restore.
     else if (before !== null) store.setComposing(owns(tab))
@@ -306,10 +307,10 @@ export function createEmailTabs(api: ValleyPluginApi, store: EmailStore): EmailT
         void api.settings.set(MAIN_TAB_TITLE_SETTING, next).catch(() => undefined)
       }, 0)
     },
-    openNew: (selection, title) => {
+    openNew: (selection, title, afterFocus) => {
       if (disposed) return
       const instanceId = newInstanceId()
-      park(instanceId, { selection, ...(title ? { title } : {}) })
+      park(instanceId, { selection, ...(title ? { title } : {}), ...(afterFocus ? { afterFocus } : {}) })
       notify()
       api.workspace.openMainTab({ instanceId, newTab: true, ...(title ? { title } : {}) })
     },

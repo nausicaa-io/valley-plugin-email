@@ -71,6 +71,8 @@ export interface EmailStore {
   getSnapshot(): EmailSnapshot
   dispose(): Promise<void>
   refreshAccounts(): Promise<void>
+  /** "Try again" on the notice: reload the accounts and run the sync again. */
+  retry(): Promise<void>
   selectAccount(accountId: string): Promise<void>
   selectAccounts(accountIds: string[]): Promise<void>
   selectFolder(folder: string): Promise<void>
@@ -168,6 +170,7 @@ function createStore(api: ValleyPluginApi): EmailStore {
   }, (contacts) => set({ contacts }))
   const resolveContacts = contacts.refresh
   const report = (error: unknown): void => set({ error: error instanceof Error ? error.message : String(error) })
+  let syncError: string | null = null
   const messagesController = createMessageController(mail, {
     snapshot: () => state, active: () => !disposed, activeAccountIds, set, report, updateTitle, pushHistory: () => mailboxController.pushHistory(), resolveContacts,
     removeFromHistory: (key) => mailboxController.removeFromHistory(key),
@@ -198,7 +201,12 @@ function createStore(api: ValleyPluginApi): EmailStore {
     refreshMessages: () => loadMessages(),
     messageKey: () => messagesController.queryKey(),
     setSyncing: (syncing) => set({ syncing, ...(syncing ? { error: null } : {}) }),
-    report
+    report,
+    reportSync: (error) => {
+      if (error) { syncError = error; set({ error }) }
+      else if (syncError !== null && state.error === syncError) set({ error: null })
+      if (!error) syncError = null
+    }
   }, mail)
   const sync = syncController.sync
   const syncIfStale = (): Promise<void> => syncController.syncIfStale()
@@ -248,6 +256,7 @@ function createStore(api: ValleyPluginApi): EmailStore {
     smartGroups, refreshAccounts, selectAccount, selectAccounts, selectView, selectFolder: (folder) => selectView('folder', folder), loadMore: () => loadMessages(true),
     // Opening mail in the tab that shows the draft releases the draft in that same turn.
     openMessage: (message) => { if (!disposed && state.composing) releaseComposeTab(); openMessage(message) }, sync, syncIfStale, act, setPlainText: (message, htmlContent, plainText) => set({ bodyOverride: { key: messageKey(message), htmlContent, plainText } }), dismissError: () => set({ error: null }),
+    retry: async () => { set({ error: null }); await refreshAccounts(); await sync() },
     setQuery,
     setFilters: filters => { messagesController.invalidateMessages(); set({ filters, messages: [], cursor: undefined }); void api.settings.set('filters', filters).catch(report); void loadMessages() },
     selectGroup: (accountId, groupId) => selectView('recent', state.selectedFolder, { accountId, groupId }),

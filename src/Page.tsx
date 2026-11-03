@@ -36,7 +36,7 @@ export const Page: React.FC<MainWorkspaceViewProps> = ({ navigation }) => {
       <span className="email-toolbar-title" title={selected.subject || uiText('email.noSubject')}>{selected.subject || uiText('email.noSubject')}</span>
       <MessageActions message={selected} />
     </>}</header>
-    {snap.error && <div className="email-notice-slot"><ErrorNotice onRetry={() => { void store.refreshAccounts() }} /></div>}
+    {snap.error && <div className="email-notice-slot"><ErrorNotice onRetry={() => { void store.retry() }} /></div>}
     {!snap.selectedAccountId ? <div className="email-placeholder"><div className="email-placeholder-content">
       <div className="email-placeholder-icon"><Mail /></div>
       <p className="email-placeholder-title">{uiText('auto.ea9ca69a7a4b')}</p>

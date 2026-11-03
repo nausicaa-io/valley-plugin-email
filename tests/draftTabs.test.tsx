@@ -52,6 +52,25 @@ async function run(active: string, saved?: { rows: DatasetRecord[]; settings: Re
 }
 
 describe('Email drafts and tabs (F19)', () => {
+  it('opens a Mod-clicked mailto link as compose in a new Email tab and leaves the current tab as it was', async () => {
+    const app = await run('tab-a')
+    await app.main.restore(state(7), 'tab-a', { background: true })
+    await waitFor(() => expect(app.shown()).toEqual({ uid: 7, composing: false }))
+    const openMainTab = vi.spyOn(app.mock.api.workspace, 'openMainTab').mockImplementation((options) => {
+      if (options?.instanceId) app.mock.emitState({ activePluginTab: { pluginId: 'email', instanceId: options.instanceId } })
+    })
+    const handler = vi.mocked(app.mock.api.links.register).mock.calls[0][0]
+    expect(await handler.open({ category: 'email', value: 'mailto:fern@example.test?subject=Canopy' }, { newTab: true })).toEqual({ status: 'opened' })
+    const opened = openMainTab.mock.calls.at(-1)![0]!
+    expect(opened).toMatchObject({ newTab: true, instanceId: expect.stringMatching(/^mail-/) })
+    expect(emailTabs()!.instance()).toBe(opened.instanceId)
+    expect(app.shown().composing).toBe(true)
+    expect(getStore().getSnapshot().compose).toMatchObject({ subject: 'Canopy', to: [{ address: 'fern@example.test' }] })
+    await app.activate('tab-a')
+    await waitFor(() => expect(app.shown()).toEqual({ uid: 7, composing: false }))
+    expect((await app.keep()).settings[COMPOSE_TAB_SETTING]).toEqual({ draft: getStore().getSnapshot().compose!.id, tab: opened.instanceId })
+  })
+
   it('opens an unsaved draft again only in the tab that showed it, after a reload, a restart, or reopening that tab', async () => {
     let app = await run('tab-a')
     await app.main.restore(state(7), 'tab-a', { background: true })

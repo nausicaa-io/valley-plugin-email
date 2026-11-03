@@ -13,8 +13,10 @@
 import codeBlockExamples from './codeBlockExamples.json'
 import { React, api } from './runtime'
 import type { FC } from 'react'
-import type { EmailMessageRef } from './mailTypes'
+import type { EmailMessageRef, EmailMessageSummary } from './mailTypes'
 import type { CachedMessage } from './mailTypes'
+import { folderLabel } from './Panel'
+import { contactName } from './People'
 import { fenceInt, parseFenceParams } from '@valley/plugin-sdk/fenceParams'
 import { getStore } from './store'
 import { uiText } from './localization'
@@ -66,6 +68,12 @@ export function filterFenceMessages<T extends CachedMessage>(
     .slice(0, limit)
 }
 
+const senderLabel = (message: EmailMessageSummary, contacts: Parameters<typeof contactName>[1]): string => {
+  const sender = message.addresses?.from[0]
+  if (sender) return contactName(sender, contacts)
+  return message.from.replace(/<.*>/, '').trim().replace(/^"(.*)"$/, '$1') || message.from
+}
+
 const dateLabel = (iso: string): string => {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
@@ -95,10 +103,13 @@ const EmailFence: FC<{ code: string }> = ({ code }) => {
     limit
   )
 
+  const mailbox = snap.mailboxes.find((entry) => entry.path === snap.selectedFolder)
+  const mailboxTitle = snap.view !== 'folder' ? uiText(`email.view.${snap.view}`) : mailbox ? folderLabel(mailbox) : snap.selectedFolder
+
   return (
     <>
       <div className="email-fence-head" onClick={() => open(null)} title={uiText('auto.aa14c20ab180')}>
-        <span className="t">{uiText('auto.be36d4779772')}{' '}{snap.selectedFolder}</span>
+        <span className="t">{uiText('auto.be36d4779772')}{' '}{mailboxTitle}</span>
         <span className="c">
           {snap.syncing ? uiText('auto.f8b9f13e52cc') : uiText('auto.3791d49b494b', { p0: shown.length })}
         </span>
@@ -112,7 +123,7 @@ const EmailFence: FC<{ code: string }> = ({ code }) => {
           title={message.subject}
         >
           <div className="top">
-            <span className="from">{message.from.replace(/<.*>/, '').trim() || message.from}</span>
+            <span className="from">{senderLabel(message, snap.contacts)}</span>
             <span className="subject">{message.subject || uiText('auto.49b20da0bf73')}</span>
             <span className="date">{dateLabel(message.date)}</span>
           </div>

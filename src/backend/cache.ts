@@ -257,9 +257,18 @@ function cachedMessage(message: DatasetRecord, membership: DatasetRecord): Cache
 }
 
 /** Read every cached message for one folder. */
-export async function readFolder(scope: EmailStoreContext, accountId: string, folder: string): Promise<CachedMessage[]> {
+export async function readFolder(scope: EmailStoreContext, accountId: string, folder: string, only: { uid?: number; limit?: number } = {}): Promise<CachedMessage[]> {
   try {
-    const memberships = await queryAll(scope, scope.datasets.folderMessages, { accountId, folder })
+    let memberships = await queryAll(scope, scope.datasets.folderMessages, { accountId, folder, ...(only.uid === undefined ? {} : { uid: only.uid }) })
+    // Only the newest `limit` memberships need their message rows (and bodies).
+    if (only.limit !== undefined && memberships.length > only.limit) {
+      const ids = [...new Set(memberships.map((membership) => String(membership.messageId)))]
+      const dates = new Map<string, string>()
+      for (let index = 0; index < ids.length; index += 100) {
+        for (const row of await queryAll(scope, scope.datasets.messages, { accountId, id: { in: ids.slice(index, index + 100) } }, ['id', 'date'])) dates.set(String(row.id), String(row.date ?? ''))
+      }
+      memberships = memberships.sort((a, b) => (dates.get(String(a.messageId)) ?? '') < (dates.get(String(b.messageId)) ?? '') ? 1 : -1).slice(0, only.limit)
+    }
     const ids = [...new Set(memberships.map((membership) => String(membership.messageId)))]
     const messages: DatasetRecord[] = []
     for (let index = 0; index < ids.length; index += 100) {

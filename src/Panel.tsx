@@ -34,12 +34,14 @@ export function draftsMailbox(mailboxes: EmailMailbox[]): EmailMailbox | undefin
   return mailboxes.find((mailbox) => mailbox.specialUse === '\\Drafts')
     ?? mailboxes.find((mailbox) => /^drafts?$/i.test((mailbox.delimiter ? mailbox.path.split(mailbox.delimiter).pop() : mailbox.name) || mailbox.name))
 }
-/** Whether the mailbox list shows the local draft: in the Drafts mailbox of the draft's account, matching the search. */
+/** Whether the mailbox list shows the local draft: in the Drafts mailbox of the draft's account (its Inbox when it has none), matching the search. */
 export function showsDraft(snap: Pick<EmailSnapshot, 'compose' | 'view' | 'group' | 'selectedFolder' | 'selectedAccountIds' | 'accounts' | 'mailboxesByAccount' | 'query'>): snap is typeof snap & { compose: ComposeDraft } {
   const draft = snap.compose
   if (!draft || snap.view !== 'folder' || snap.group || !snap.accounts.some((account) => account.id === draft.accountId)) return false
   if (snap.selectedAccountIds.length && !snap.selectedAccountIds.includes(draft.accountId)) return false
-  if (draftsMailbox(snap.mailboxesByAccount[draft.accountId] ?? [])?.path !== snap.selectedFolder) return false
+  const mailboxes = snap.mailboxesByAccount[draft.accountId] ?? []
+  const home = draftsMailbox(mailboxes) ?? mailboxes.find((mailbox) => mailbox.specialUse === '\\Inbox' || mailbox.path.toUpperCase() === 'INBOX')
+  if (home?.path !== snap.selectedFolder) return false
   const query = snap.query.trim().toLowerCase()
   return !query || [draft.subject, draft.text, ...[...draft.to, ...draft.cc, ...draft.bcc].flatMap((entry) => [entry.name, entry.address])].some((value) => value.toLowerCase().includes(query))
 }
@@ -191,7 +193,8 @@ export const MailboxControls: React.FC<{ compact?: boolean }> = ({ compact = fal
       else delete button.dataset.focusSource
     }
   }
-  return <><div ref={bar} className={`email-mailbox-controls${compact ? ' compact' : ''}`} onPointerDownCapture={() => focusSource('pointer')} onKeyDownCapture={() => focusSource('keyboard')}>
+  return <><div ref={bar} className={`email-mailbox-controls${compact ? ' compact' : ''}`} onPointerDownCapture={() => focusSource('pointer')} onKeyDownCapture={() => focusSource('keyboard')}
+    onKeyDown={event => { if (event.key === 'Escape' && expanded) { event.preventDefault(); event.stopPropagation(); close() } }}>
     <button className="email-selector email-account-selector" disabled={!account} title={accountLabel || uiText('auto.73e3e6e8e067')}
       aria-label={uiText('auto.73e3e6e8e067')} aria-expanded={expanded === 'accounts'} aria-controls={panelId} onClick={(event) => {
         toggle('accounts', event.currentTarget)
@@ -259,7 +262,7 @@ export const Panel: React.FC = () => {
       {account ? <MailboxControls compact /> : <button className="email-add-account" onClick={() => api.workspace.openOwnSettings()}><Plus />{uiText('auto.98b0ed858ae4')}</button>}
     </div>}
     <div className="panel-body email-panel-body">
-      <ErrorNotice onRetry={() => { void store.refreshAccounts() }} />
+      <ErrorNotice onRetry={() => { void store.retry() }} />
       {snap.loading ? <api.ui.ContentLoader label={uiText('auto.33ce417454bf')} compact /> : account ? <>
         <div className="search-field-row">
           <label className="email-search search-field"><Search className="search-field-icon" /><input className="search-field-input" value={snap.query} aria-label={uiText('email.search')} onChange={(event) => store.setQuery(event.target.value)} placeholder={uiText('email.search')} /></label>

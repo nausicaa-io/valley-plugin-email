@@ -41,7 +41,7 @@ export function createMailMock(options?: Parameters<typeof createMockValleyApi>[
         case 'removeAccount': return mail.removeAccount(String(input.accountId))
         case 'listFolders': return mail.listFolders(String(input.accountId))
         case 'syncFolder': return mail.syncFolder(String(input.accountId), input.folder as string | undefined, input.limit as number | undefined)
-        case 'readFolder': return mail.readFolder(String(input.accountId), input.folder as string | undefined)
+        case 'readFolder': { const only = { ...(input.uid === undefined ? {} : { uid: input.uid as number }), ...(input.limit === undefined ? {} : { limit: input.limit as number }) }; return Object.keys(only).length ? mail.readFolder(String(input.accountId), input.folder as string | undefined, only) : mail.readFolder(String(input.accountId), input.folder as string | undefined) }
         case 'sendEmail': return mail.sendEmail(payload as EmailSendInput)
         case 'applyMessageAction': return mail.applyMessageAction(payload as EmailMessageActionInput)
         default: throw new Error(`Unknown mail fixture method: ${method}`)

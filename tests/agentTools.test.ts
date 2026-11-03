@@ -93,7 +93,10 @@ describe('email assistant tools', () => {
 
     const read = JSON.parse(String(await provider.execute('read_mail_message', { accountId: account.id, folder: 'INBOX', uid: 17 })))
     expect(read).toMatchObject({ uid: 17, replyTo: 'field-team@example.test', text: expect.stringContaining('Moss cover') })
+    expect(email.readFolder).toHaveBeenLastCalledWith('forest-mail', 'INBOX', { uid: 17 })
     expect(email.applyMessageAction).not.toHaveBeenCalled()
+    await provider.execute('read_inbox', { accountId: account.id, limit: 3 })
+    expect(email.readFolder).toHaveBeenLastCalledWith('forest-mail', 'INBOX', { limit: 3 })
   })
 
   it('routes mailbox mutations through the package backend action', async () => {

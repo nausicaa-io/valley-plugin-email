@@ -1,7 +1,7 @@
 import { CONTACTS_DIRECTORY_V1, type ValleyPluginApi } from '@valley/plugin-sdk'
 import type { DatasetPage, DatasetRecord } from '@valley/plugin-sdk/datasets'
 import { digest } from './backend/identity'
-import { accountRevision, decideSmartGroup, hasRules, resolveClassifierModel, senderAddress, usesContacts, type SmartGroupsStore } from './smartGroups'
+import { accountRevision, decideSmartGroup, descendantIds, hasRules, resolveClassifierModel, senderAddress, usesContacts, type SmartGroupsConfig, type SmartGroupsStore } from './smartGroups'
 
 export interface ClassificationProgress { pending: number; completed: number; failed: number; paused?: 'unavailable' | 'rate-limited'; error?: string }
 const configurationKey = '_configuration'
@@ -169,6 +169,35 @@ export function createClassificationQueue(api: ValleyPluginApi, smartGroups: Sma
     await pump()
   }
   const startup = recover().catch(reason => { error = String(reason); void report() })
+  // A removed group leaves no messages on its id: they go back to ungrouped (also manual ones) and can be sorted again.
+  const groupIds = (config: SmartGroupsConfig): Map<string, Set<string>> => new Map(Object.entries(config.accounts).map(([accountId, account]) => [accountId, new Set((account?.groups ?? []).flatMap(descendantIds))]))
+  let known: Map<string, Set<string>> | undefined
+  const forget = (accountId: string, removed: string[]) => serialize(async () => {
+    for (;;) {
+      const page = await messages.query({ where: { accountId, categoryId: { in: removed } }, select: ['id'], limit: 200 })
+      const rows = page.rows.length ? page.rows : []
+      const stale = (await assignments.query({ where: { id: { in: rows.map(row => String(row.id)) }, categoryId: { in: removed } }, limit: 200 })).rows
+      for (const row of stale) await assignments.upsert({ ...row, categoryId: null, manual: false, confidence: null, source: null, configurationRevision: null, revision: Number(row.revision ?? 0) + 1 })
+      if (rows.length) await messages.updateMany(rows.map(row => ({ key: { id: String(row.id) }, values: { categoryId: null } })))
+      if (page.rows.length < 200) break
+    }
+    if (!disposed) await refresh()
+  })
+  const watchGroups = () => {
+    void smartGroups.ready.then(() => {
+      if (disposed) return
+      const next = groupIds(smartGroups.get())
+      const previous = known
+      known = next
+      if (!previous) return
+      for (const [accountId, ids] of previous) {
+        const removed = [...ids].filter(id => !next.get(accountId)?.has(id))
+        if (removed.length) void forget(accountId, removed).catch(reason => { error = String(reason); void report() })
+      }
+    })
+  }
+  watchGroups()
+  const offGroups = smartGroups.subscribe(watchGroups)
   return {
     enqueue, assign,
     reset: async (id: string) => { await assign(id, null, false); const stale = await jobs.query({ where: { messageId: id, status: { notIn: ['running', 'queued'] } }, limit: 1000 }); if (stale.rows.length) await jobs.updateMany(stale.rows.map(row => ({ key: { id: String(row.id) }, values: { status: 'queued', error: null } }))); await enqueue([id]); void pump() },
@@ -181,6 +210,6 @@ export function createClassificationQueue(api: ValleyPluginApi, smartGroups: Sma
       for (;;) { const page = await jobs.query({ where: { status: 'queued' }, limit: 500 }); if (!page.rows.length) break; await jobs.updateMany(page.rows.map(row => ({ key: { id: String(row.id) }, values: { status: 'cancelled' } }))) }
       await report()
     },
-    dispose: async () => { disposed = true; if (recoveryTimer) clearTimeout(recoveryTimer); if (timer) clearTimeout(timer); await startup; await Promise.allSettled([...requests.values()].map(requestId => api.ai.cancel(requestId))); await Promise.allSettled([...active.values(), mutation]) }
+    dispose: async () => { disposed = true; offGroups(); if (recoveryTimer) clearTimeout(recoveryTimer); if (timer) clearTimeout(timer); await startup; await Promise.allSettled([...requests.values()].map(requestId => api.ai.cancel(requestId))); await Promise.allSettled([...active.values(), mutation]) }
   }
 }

@@ -100,10 +100,11 @@ const methods = {
         smtp: p.smtp,
         createdAt: Date.now()
       }
-      // Store the password first so verifyImap can read it, then roll back on failure.
+      // Store the password first so both checks can read it, then roll back on failure.
       await scope.credentials.set(credentialName(id), p.password, [accountEndpoint(account, 'imap'), accountEndpoint(account, 'smtp')], MAIL_CREDENTIAL_STORE)
       try {
         await verifyImap(scope, account)
+        await verifySmtp(scope, account).catch((error: unknown) => { throw new Error(`SMTP: ${mailDiagnostic(error)}`) })
       } catch (err) {
         await scope.credentials.delete(credentialName(id), MAIL_CREDENTIAL_STORE)
         throw err
@@ -275,9 +276,9 @@ const methods = {
       return { accountId: input.accountId, folder: input.folder, uid: input.uid, messageRemoved: forgotten.message }
     }),
 
-  readFolder: mailMethod(z.object({ accountId: z.string().min(1), folder: z.string().min(1).default('INBOX') }), async (scope, payload) => {
+  readFolder: mailMethod(z.object({ accountId: z.string().min(1), folder: z.string().min(1).default('INBOX'), uid: z.number().int().positive().optional(), limit: z.number().int().min(1).max(1000).optional() }), async (scope, payload) => {
       const p = payload
-      return { messages: await readFolder(scope, p.accountId, p.folder) }
+      return { messages: await readFolder(scope, p.accountId, p.folder, { uid: p.uid, limit: p.limit }) }
     }),
 
   sendEmail: mailMethod(z.object({

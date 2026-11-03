@@ -285,7 +285,8 @@ export interface EmailDriver {
   /** Fetch recent messages for a folder into the local cache. */
   syncFolder(accountId: string, folder?: string, limit?: number): Promise<DriverResult>
   /** Read cached messages for a folder (no network). */
-  readFolder(accountId: string, folder?: string): Promise<EmailMessagesResult>
+  /** Cached messages of a folder, newest first; `uid` reads one message and `limit` only the newest ones (each with its body). */
+  readFolder(accountId: string, folder?: string, only?: { uid?: number; limit?: number }): Promise<EmailMessagesResult>
   /** Send a message and append it to the Sent cache. */
   sendEmail(input: EmailSendInput): Promise<DriverResult & { outcome?: 'remote-complete' | 'not-applied' | 'unknown'; data?: { messageId: string } }>
   /** Mutate one message on the server and mirror the successful result into the local cache. */

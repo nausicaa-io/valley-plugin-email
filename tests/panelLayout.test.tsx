@@ -122,4 +122,19 @@ describe('Email sidebar layout', () => {
     expect(container.querySelector('.email-inline-options')).toBeNull()
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Mailboxes' }))
   })
+
+  it.each(['Mailboxes', 'Filters'])('closes the open %s section on Escape while its trigger has focus', async (name) => {
+    setup()
+    await getStore().whenReady
+    const { container } = render(<Panel />)
+    const trigger = await screen.findByRole('button', { name })
+    trigger.focus()
+    fireEvent.click(trigger)
+    expect(container.querySelector('.email-inline-options')).toBeTruthy()
+    const escape = fireEvent.keyDown(trigger, { key: 'Escape' })
+    expect(container.querySelector('.email-inline-options')).toBeNull()
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(document.activeElement).toBe(trigger)
+    expect(escape).toBe(false)
+  })
 })

@@ -44,7 +44,7 @@ async function cachedMessage(
   folder: string,
   uid: number
 ): Promise<CachedMessage> {
-  const result = await mailApi(api).readFolder(accountId, folder)
+  const result = await mailApi(api).readFolder(accountId, folder, { uid })
   if (!result.ok) throw new Error(result.error ?? uiText('email.agentError.read', { value: folder }))
   const message = (result.data?.messages ?? []).find((candidate) => candidate.uid === uid)
   if (!message) throw new Error(uiText('email.agentError.message', { uid, folder }))
@@ -119,7 +119,7 @@ function emailToolDefinitions(api: ValleyPluginApi): AgentToolDefinition[] {
         const limit = limitOf(args.limit, 10)
         const synced = await mailApi(api).syncFolder(account.id, 'INBOX', limit)
         if (!synced.ok) throw new Error(synced.error ?? uiText('email.agentError.sync', { value: 'INBOX' }))
-        const result = await mailApi(api).readFolder(account.id, 'INBOX')
+        const result = await mailApi(api).readFolder(account.id, 'INBOX', { limit })
         if (!result.ok) throw new Error(result.error ?? uiText('email.agentError.read', { value: 'INBOX' }))
         const messages = (result.data?.messages ?? []).slice(0, limit)
         return messages.length ? json({ accountId: account.id, folder: 'INBOX', messages: messages.map(summary) }) : 'Inbox empty.'

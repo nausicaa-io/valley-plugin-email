@@ -8,6 +8,8 @@ import { createMailMock } from './mailMock'
 import { register } from '../src/index'
 import { getStore } from '../src/store'
 import { COMPOSE_TAB_SETTING, emailTabs } from '../src/tabs'
+import { showsDraft } from '../src/Panel'
+import type { EmailMailbox } from '../src/mailTypes'
 
 const detail = (uid: number, subject: string): EmailMessageDetail => ({
   id: `msg-${uid}`, accountId: 'one', folder: 'INBOX', uid, messageId: `<msg-${uid}@example.com>`,
@@ -106,6 +108,21 @@ describe('Email 2.1.2: the saved local draft in the Drafts mailbox', () => {
     view = render(React.createElement(app.panel()))
     await waitFor(() => expect(view.container.querySelector('.email-selector[title="Recent"]')).not.toBeNull())
     expect(view.container.querySelector('.email-draft-entry')).toBeNull()
+  })
+})
+
+describe('Email 2.1.5: a draft of an account without a Drafts mailbox', () => {
+  it('lists the draft first in that account’s Inbox, and only in the Drafts mailbox when the account has one', () => {
+    const inbox: EmailMailbox = { path: 'INBOX', name: 'Inbox', specialUse: '\\Inbox', selectable: true, cachedTotal: 0, cachedUnread: 0 }
+    const drafts: EmailMailbox = { path: 'Drafts', name: 'Drafts', specialUse: '\\Drafts', selectable: true, cachedTotal: 0, cachedUnread: 0 }
+    const compose = { id: 1, accountId: 'one', mode: 'new' as const, to: [], cc: [], bcc: [], pending: { to: '', cc: '', bcc: '' }, subject: 'Marsh count', text: '', dirty: false }
+    const snap = (folder: string, mailboxes: EmailMailbox[]) => ({ compose, view: 'folder' as const, group: null, selectedFolder: folder, selectedAccountIds: [], query: '',
+      accounts: [{ id: 'one', provider: 'pureemail' as const, address: 'one@example.com', imap: { host: 'example.com', port: 993, secure: true }, smtp: { host: 'example.com', port: 465, secure: true }, createdAt: 1 }],
+      mailboxesByAccount: { one: mailboxes } })
+    expect(showsDraft(snap('INBOX', [inbox]))).toBe(true)
+    expect(showsDraft(snap('INBOX', [inbox, drafts]))).toBe(false)
+    expect(showsDraft(snap('Drafts', [inbox, drafts]))).toBe(true)
+    expect(showsDraft(snap('INBOX', []))).toBe(false)
   })
 })
 

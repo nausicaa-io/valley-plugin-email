@@ -404,6 +404,7 @@ describe('backend account work ownership', () => {
     const host = await fixture(['a', 'b', 'c'])
     const held = deferred()
     const verify = vi.spyOn(transport, 'verifyImap').mockImplementation(async () => { await held.promise })
+    vi.spyOn(transport, 'verifySmtp').mockResolvedValue()
     vi.spyOn(transport, 'fetchFolder').mockResolvedValue({ messages: [], uidValidity: 1 })
     const adding = host.call('addSmtpAccount', { address: 'new@example.test', password: 'fixture-secret', imap: account('new').imap, smtp: account('new').smtp })
     await vi.waitFor(() => expect(verify).toHaveBeenCalledOnce())
@@ -413,6 +414,28 @@ describe('backend account work ownership', () => {
     held.resolve()
     expect(await adding).toMatchObject({ ok: true, data: { account: { address: 'new@example.test' } } })
     expect(await removing).toMatchObject({ ok: true, data: { accounts: [expect.objectContaining({ id: 'a' }), expect.objectContaining({ id: 'c' }), expect.objectContaining({ address: 'new@example.test' })] } })
+    await host.dispose()
+  })
+
+  it('reads one cached message or only the newest ones of a folder instead of every body', async () => {
+    const host = await fixture(['a'])
+    await mergeFolder(host.scope, 'a', 'INBOX', [message, { ...message, uid: 2, messageId: '<later@example.test>', subject: 'Later', date: '2026-09-20T10:00:00Z' }, { ...message, uid: 3, messageId: '<earliest@example.test>', subject: 'Earliest', date: '2026-09-18T10:00:00Z' }])
+    expect((await host.call('readFolder', { accountId: 'a', folder: 'INBOX' }) as { data: { messages: CachedMessage[] } }).data.messages.map(item => item.uid)).toEqual([2, 1, 3])
+    expect((await host.call('readFolder', { accountId: 'a', folder: 'INBOX', uid: 1 }) as { data: { messages: CachedMessage[] } }).data.messages.map(item => item.subject)).toEqual(['Survey'])
+    expect((await host.call('readFolder', { accountId: 'a', folder: 'INBOX', limit: 2 }) as { data: { messages: CachedMessage[] } }).data.messages.map(item => item.uid)).toEqual([2, 1])
+    await host.dispose()
+  })
+
+  it('checks SMTP as well as IMAP before adding an account and keeps nothing when SMTP fails', async () => {
+    const host = await fixture(['a'])
+    vi.spyOn(transport, 'verifyImap').mockResolvedValue()
+    const smtp = vi.spyOn(transport, 'verifySmtp').mockRejectedValue(new Error('535 Authentication failed'))
+    const added = await host.call('addSmtpAccount', { address: 'new@example.test', password: 'fixture-secret', imap: account('new').imap, smtp: account('new').smtp })
+    expect(smtp).toHaveBeenCalledOnce()
+    expect(added).toMatchObject({ ok: false, error: expect.stringContaining('535') })
+    expect(host.api.credentials.delete).toHaveBeenCalledOnce()
+    expect(await host.call('listAccounts', {})).toMatchObject({ ok: true, data: { accounts: [expect.objectContaining({ id: 'a' })] } })
+    expect((await host.call('listAccounts', {}) as { data: { accounts: unknown[] } }).data.accounts).toHaveLength(1)
     await host.dispose()
   })
 

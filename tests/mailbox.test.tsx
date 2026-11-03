@@ -158,6 +158,62 @@ describe('Email mailbox', () => {
     await waitFor(() => expect(mock.mail.queryMessages).toHaveBeenCalledTimes(3))
   })
 
+  it('shows sender names without quotes and the translated mailbox name in an embedded list', async () => {
+    const mock = setup(Promise.resolve(), { from: '"Canopy Team" <canopy@example.com>', addresses: { ...message.addresses, from: [{ name: 'Canopy Team', address: 'canopy@example.com' }] } })
+    const store = getStore()
+    await store.whenReady
+    await waitFor(() => expect(store.getSnapshot().mailboxes.length).toBeGreaterThan(0))
+    const element = document.createElement('div')
+    document.body.append(element)
+    const { createRoot } = await import('react-dom/client')
+    const root = createRoot(element)
+    vi.spyOn(mock.api.ui, 'renderReact').mockImplementation((_target, node) => { root.render(node as React.ReactElement); return () => {} })
+    act(() => { mock.codeBlockRenderers.get('email')?.('limit: 5', element, { path: null, meta: null }) })
+    await waitFor(() => expect(element.querySelector('.email-fence-row .from')?.textContent).toBe('Canopy Team'))
+    expect(element.querySelector('.email-fence-head .t')?.textContent).toBe('Email · Inbox')
+    act(() => root.unmount())
+    element.remove()
+  })
+
+  it('retries the failed sync from Try again and clears the notice once it succeeds', async () => {
+    const mock = setup()
+    const store = getStore()
+    await store.whenReady
+    let fail = true
+    mock.mail.syncFolder = vi.fn(async () => fail ? { ok: false, error: 'Connection refused' } : { ok: true })
+    await store.sync()
+    render(<Page navigation={{ setController: vi.fn() }} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('one@example.com: Connection refused')
+    const calls = vi.mocked(mock.mail.syncFolder).mock.calls.length
+    fail = false
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(vi.mocked(mock.mail.syncFolder).mock.calls.length).toBeGreaterThan(calls))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  })
+
+  it('clears a sync notice when a later sync of every failed folder succeeds, but keeps other errors', async () => {
+    let onSync!: Parameters<ReturnType<typeof createMockValleyApi>['mail']['onSync']>[0]
+    const mock = setup(Promise.resolve(), {}, (mock) => {
+      mock.mail.onSync = (listener) => { onSync = listener; return () => {} }
+    })
+    const store = getStore()
+    await store.whenReady
+    mock.mail.syncFolder = vi.fn(async (accountId) => accountId === 'one' ? { ok: false, error: 'Connection refused' } : { ok: true })
+    await store.sync()
+    expect(store.getSnapshot().error).toBe('one@example.com: Connection refused')
+    act(() => onSync({ accountId: 'two', folder: 'INBOX', status: 'done', fetched: 0, total: 0 }))
+    expect(store.getSnapshot().error).toBe('one@example.com: Connection refused')
+    act(() => onSync({ accountId: 'one', folder: 'Archive', status: 'done', fetched: 0, total: 0 }))
+    expect(store.getSnapshot().error).toBe('one@example.com: Connection refused')
+    act(() => onSync({ accountId: 'one', folder: 'INBOX', status: 'done', fetched: 0, total: 0 }))
+    expect(store.getSnapshot().error).toBeNull()
+    mock.mail.applyMessageAction = vi.fn(async () => ({ ok: false, error: 'Mailbox is read-only' }))
+    await store.act(message, 'flag')
+    expect(store.getSnapshot().error).toContain('Mailbox is read-only')
+    act(() => onSync({ accountId: 'one', folder: 'INBOX', status: 'done', fetched: 0, total: 0 }))
+    expect(store.getSnapshot().error).toContain('Mailbox is read-only')
+  })
+
   it('joins every sync caller through the final coalesced pass with one active folder request', async () => {
     const mock = setup()
     const store = getStore()
@@ -914,7 +970,8 @@ describe('Email mailbox', () => {
     expect(getStore().getSnapshot().compose?.to).toEqual([{ name: 'Canopy Observatory', address: 'canopy+field@example.com' }])
     act(() => off())
     await waitFor(() => expect(getStore().getSnapshot().contacts).toEqual({}))
-    expect(document.querySelector('.email-message-avatar .email-avatar-initials')?.textContent).toBe('C')
+    // The draft (this account has no Drafts mailbox) is the Inbox's first entry; the message row below it falls back to initials.
+    expect(document.querySelector('.email-swipe-row:not(.email-draft-entry) .email-message-avatar .email-avatar-initials')?.textContent).toBe('C')
   })
 
   it('keeps hidden swipe actions out of focus, closes the previous row, and preserves vertical wheel scrolling', async () => {

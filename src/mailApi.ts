@@ -31,7 +31,7 @@ export function mailApi(api: { backend: Pick<ValleyPluginApi['backend'], 'call' 
     removeAccount: (accountId) => call('removeAccount', { accountId }),
     listFolders: (accountId) => call('listFolders', { accountId }),
     syncFolder: (accountId, folder, limit) => call('syncFolder', { accountId, folder, limit }),
-    readFolder: (accountId, folder) => call('readFolder', { accountId, folder }),
+    readFolder: (accountId, folder, only) => call('readFolder', { accountId, folder, ...only }),
     sendEmail: (input) => call('sendEmail', input),
     applyMessageAction: (input) => call('applyMessageAction', input),
     onSync: (listener) => api.backend.on('sync', (payload) => listener(payload as EmailSyncEvent))

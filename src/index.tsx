@@ -25,13 +25,25 @@ export function register(api: ValleyPluginApi): () => Promise<void> {
   const offLinkHandler = api.links.register({
     id: 'compose',
     label: api.ui.t('manifest.name'), version: '1.0.0', categories: ['email'], schemes: ['mailto'],
-    open: async ({ value }) => {
+    open: async ({ value }, options) => {
       await store.whenReady
       const url = new URL(value)
       const addresses = (raw: string) => raw.split(',').map(address => address.trim()).filter(address => /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(address)).map(address => ({ address, name: '' }))
       const previous = store.getSnapshot().compose
-      await store.startCompose('new', undefined, { to: addresses(decodeURIComponent(url.pathname)), cc: addresses(url.searchParams.get('cc') ?? ''), bcc: addresses(url.searchParams.get('bcc') ?? ''), subject: (url.searchParams.get('subject') ?? '').replace(/[\r\n]/g, ' '), text: url.searchParams.get('body') ?? '' })
-      revealEmailTab()
+      const compose = () => store.startCompose('new', undefined, { to: addresses(decodeURIComponent(url.pathname)), cc: addresses(url.searchParams.get('cc') ?? ''), bcc: addresses(url.searchParams.get('bcc') ?? ''), subject: (url.searchParams.get('subject') ?? '').replace(/[\r\n]/g, ' '), text: url.searchParams.get('body') ?? '' })
+      if (options?.newTab) {
+        // A Mod or middle click opens compose in a new Email tab once that tab has the live mailbox; the current tab stays as it is.
+        const { selection } = store.captureNavigation()
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 10_000)
+          tabs.openNew({ accountIds: selection.accountIds, view: selection.view, folder: selection.folder, query: selection.query }, uiText('auto.47da6f0838f0'), async () => {
+            try { await compose() } finally { clearTimeout(timer); resolve() }
+          })
+        })
+      } else {
+        await compose()
+        revealEmailTab()
+      }
       return { status: store.getSnapshot().compose !== previous ? 'opened' : store.getSnapshot().selectedAccountId ? 'cancelled' : 'unavailable' }
     }
   })

@@ -73,6 +73,20 @@ describe('durable classification queue', () => {
     expect(await mock.api.data.dataset('assignments').get({ id: ids[0] })).toBeNull()
   })
 
+  it('moves the messages of a removed group back to ungrouped in that account only, also manual ones', async () => {
+    const { mock, queue, ids, groups } = await setup(2)
+    await groups.ready
+    expect(groups.get().accounts.forest.groups.map(group => group.id)).toContain('canopy')
+    await queue.assign(ids[0], 'canopy')
+    await queue.assign(ids[1], 'canopy', false)
+    await mock.api.data.dataset('assignments').upsert({ id: 'wetland-message', categoryId: 'canopy', manual: true, revision: 1 })
+    await groups.update(config => { config.accounts.forest.groups = config.accounts.forest.groups.filter(group => group.id !== 'canopy') })
+    await vi.waitFor(async () => expect(await mock.api.data.dataset('assignments').get({ id: ids[0] })).toMatchObject({ categoryId: null, manual: false }))
+    expect(await mock.api.data.dataset('assignments').get({ id: ids[1] })).toMatchObject({ categoryId: null })
+    expect((await mock.api.data.dataset('messages').get({ id: ids[0] }))?.categoryId).toBeNull()
+    expect(await mock.api.data.dataset('assignments').get({ id: 'wetland-message' })).toMatchObject({ categoryId: 'canopy' })
+  })
+
   it('keeps cancellation authoritative when a provider completes afterward', async () => {
     const { mock, queue, ids } = await setup()
     let finish!: (result: AiClassificationResult) => void

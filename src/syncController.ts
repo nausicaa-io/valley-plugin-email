@@ -13,6 +13,8 @@ interface SyncPorts {
   messageKey(): string
   setSyncing(syncing: boolean): void
   report(error: unknown): void
+  /** Replaces the notice this controller last reported (null clears it); a notice from anything else stays. */
+  reportSync(error: string | null): void
 }
 
 /** A folder synced this recently (by this view or by the backend's own poll) is not synced again just because a view opened. */
@@ -21,6 +23,9 @@ const freshKey = (accountId: string, folder: string): string => JSON.stringify([
 
 export function createSyncController(api: ValleyPluginApi, ports: SyncPorts, mail = mailApi(api)) {
   const synced = new Map<string, number>()
+  // The folders whose last sync failed, with their notice line; a later success of each one clears the notice.
+  const failures = new Map<string, string>()
+  const failureText = (): string | null => failures.size ? [...new Set(failures.values())].join('\n') : null
   let active = true
   let again = false
   let pending: Promise<void> | undefined
@@ -35,9 +40,9 @@ export function createSyncController(api: ValleyPluginApi, ports: SyncPorts, mai
       const current = (): boolean => active && JSON.stringify(ports.scope()) === identity
       ports.setSyncing(true)
       latestRefresh = undefined
+      failures.clear()
       try {
         await ports.refreshFolders(scope.accountIds)
-        const errors: string[] = []
         for (const accountId of scope.accountIds) {
           if (!current()) break
           const mailboxes = ports.folders(accountId)
@@ -50,14 +55,14 @@ export function createSyncController(api: ValleyPluginApi, ports: SyncPorts, mai
               if (!result.ok) throw new Error(result.error || uiText('email.syncFailed'))
               synced.set(freshKey(accountId, folder), Date.now())
             } catch (error) {
-              errors.push(`${ports.accountLabel(accountId)}: ${error instanceof Error ? error.message : String(error)}`)
+              failures.set(freshKey(accountId, folder), `${ports.accountLabel(accountId)}: ${error instanceof Error ? error.message : String(error)}`)
             }
           }
         }
         if (current()) {
           const refresh = latestRefresh as { key: string; promise: Promise<void> } | undefined
           await (refresh?.key === ports.messageKey() ? refresh.promise : ports.refreshMessages())
-          if (current() && errors.length) ports.report([...new Set(errors)].join('\n'))
+          if (current() && failures.size) ports.reportSync(failureText())
         }
       } catch (error) { if (current()) ports.report(error) }
       finally {
@@ -84,7 +89,11 @@ export function createSyncController(api: ValleyPluginApi, ports: SyncPorts, mai
   return {
     sync,
     syncIfStale,
-    noteSynced(accountId: string, folder: string, at = Date.now()): void { synced.set(freshKey(accountId, folder), at) },
+    noteSynced(accountId: string, folder: string, at = Date.now()): void {
+      const key = freshKey(accountId, folder)
+      synced.set(key, at)
+      if (failures.delete(key)) ports.reportSync(failureText())
+    },
     recordRefresh(key: string, promise: Promise<void>): void { if (active && pending) latestRefresh = { key, promise } },
     dispose(): Promise<void> {
       if (draining) return draining
