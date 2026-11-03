@@ -144,4 +144,18 @@ describe('Smart groups in the mail view', () => {
     expect(await screen.findByText('Set by you')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reset to automatic' })).toBeInTheDocument()
   })
+
+  it('names the most likely group of an ungrouped message for threshold tuning', async () => {
+    const mock = mailbox()
+    await mock.api.data.files.writeTextGuarded(SMART_GROUPS_FILE, JSON.stringify(seeded), null)
+    await mock.api.data.dataset('assignments').insert({ id: 'v1:note', categoryId: null, manual: false, confidence: null, source: null, bestCategoryId: 'billing', bestConfidence: 0.42, contentRevision: null, configurationRevision: null, revision: 1 })
+    dispose = register(mock.api)
+    const store = getStore(mock.api)
+    await store.whenReady; await store.smartGroups.ready
+    const message = { id: 'v1:note', accountId: 'forest', folder: 'INBOX', uid: 2, messageId: '<note@example.test>', from: 'notes@power.example', to: 'forest@example.test', subject: 'Note', date: '2026-01-01T00:00:00.000Z', snippet: '', flags: [], hasAttachments: false, memberships: [],
+      addresses: { from: [{ name: '', address: 'notes@power.example' }], to: [], cc: [], replyTo: [] } } as unknown as EmailMessageDetail
+    render(<MessageOrganization message={message} />)
+    expect(await screen.findByText('Closest: Receipts / Billing, 42% sure')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Category' })).toHaveValue('')
+  })
 })

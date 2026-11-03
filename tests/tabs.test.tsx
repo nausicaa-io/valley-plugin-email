@@ -1,11 +1,12 @@
 import { cleanup, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PLUGIN_SURFACE_V1, type PluginSurfaceProvider } from '@valley/plugin-sdk'
+import { METADATA_PANEL_SEGMENT_V1, PLUGIN_SURFACE_V1, type PluginSurfaceProvider } from '@valley/plugin-sdk'
 import type { EmailMessageDetail, EmailMessageRef } from '../src/mailTypes'
 import { createMailMock } from './mailMock'
 import { register } from '../src/index'
 import { getStore } from '../src/store'
 import { emailTabs } from '../src/tabs'
+import { accountFolderLabel } from '../src/localization'
 
 const detail = (uid: number, subject: string, folder = 'INBOX'): EmailMessageDetail => ({
   id: `msg-${uid}`, accountId: 'one', folder, uid, messageId: `<msg-${uid}@example.com>`,
@@ -41,6 +42,20 @@ function setup(activeInstance?: string | null) {
 }
 
 describe('Email tabs', () => {
+  it('names a mailbox of another account from that account, in the Properties Folder row and for parked tab titles', async () => {
+    const { mock } = setup('tab-a')
+    await getStore().whenReady
+    await mock.api.data.dataset('mailboxes').insert([{ accountId: 'two', path: 'Gesendet', name: 'Gesendet', specialUse: '\\Sent', selectable: true }, { accountId: 'two', path: 'Projekte', name: 'Projekte', selectable: true }])
+    const overview = mock.api.interop.extensions.providers(METADATA_PANEL_SEGMENT_V1).find((entry) => entry.extension.id === 'email.properties')!.extension
+    const folderRow = async (accountIds: string[], folder: string) => (await overview.inspect!({ relPath: '', kind: 'unsupported', subject: { view: { accountIds, view: 'folder', folder, query: '' } } } as never)).find((field) => field.id === 'folder')?.value
+    expect(await folderRow(['two'], 'Gesendet')).toBe('Sent')
+    expect(await folderRow(['two'], 'Projekte')).toBe('Projekte')
+    await waitFor(() => expect(getStore().getSnapshot().mailboxesByAccount.one).toHaveLength(2))
+    expect(await folderRow(['one'], 'Archive')).toBe('Archive')
+    expect(await accountFolderLabel(mock.api, getStore().getSnapshot().mailboxesByAccount, ['two'], 'Gesendet')).toBe('Sent')
+    expect(await accountFolderLabel(mock.api, {}, ['three'], 'Gesendet')).toBe('Gesendet')
+  })
+
   it('keeps each Email tab on its own message while the user switches between them', async () => {
     const { mock, activate, shown, kept } = setup('tab-a')
     await getStore().whenReady

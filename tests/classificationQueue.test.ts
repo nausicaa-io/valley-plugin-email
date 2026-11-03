@@ -36,6 +36,15 @@ describe('durable classification queue', () => {
     expect(await mock.api.data.dataset('assignments').get({ id: ids[0] })).toMatchObject({ categoryId: null, manual: true })
   })
 
+  it('stores the most likely group and its probability for a result below every threshold', async () => {
+    const { mock, queue, ids } = await setup()
+    mock.api.ai.classify = vi.fn(async () => ({ ...answer, categoryId: 'uncategorized', confidence: 0.7, probabilities: { canopy: 0.3, uncategorized: 0.7 } }))
+    await queue.enqueue(ids, true)
+    await vi.waitFor(async () => expect(await mock.api.data.dataset('assignments').get({ id: ids[0] })).toMatchObject({ categoryId: null, confidence: null, bestCategoryId: 'canopy', bestConfidence: 0.3 }))
+    await queue.assign(ids[0], 'canopy')
+    expect(await mock.api.data.dataset('assignments').get({ id: ids[0] })).toMatchObject({ categoryId: 'canopy', manual: true, bestCategoryId: null, bestConfidence: null })
+  })
+
   it('caps 2000 explicit automatic candidates at 100 and deduplicates repeated arrivals', async () => {
     const { mock, queue, ids } = await setup(2000)
     mock.api.ai.classify = vi.fn(async () => answer)

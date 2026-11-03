@@ -15,6 +15,8 @@ import { createEmailTabs, revealEmailTab } from './tabs'
 import { mailApi } from './mailApi'
 import { uiText } from './localization'
 
+const MAILTO_TAB_WAIT_MS = 3_000
+
 export function register(api: ValleyPluginApi): () => Promise<void> {
   initLocalization(api)
   initRuntime(api)
@@ -33,11 +35,15 @@ export function register(api: ValleyPluginApi): () => Promise<void> {
       const compose = () => store.startCompose('new', undefined, { to: addresses(decodeURIComponent(url.pathname)), cc: addresses(url.searchParams.get('cc') ?? ''), bcc: addresses(url.searchParams.get('bcc') ?? ''), subject: (url.searchParams.get('subject') ?? '').replace(/[\r\n]/g, ' '), text: url.searchParams.get('body') ?? '' })
       if (options?.newTab) {
         // A Mod or middle click opens compose in a new Email tab once that tab has the live mailbox; the current tab stays as it is.
+        // A tab the host has not activated within the wait no longer takes the compose later, so the reported status holds.
         const { selection } = store.captureNavigation()
         await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, 10_000)
+          let waiting = true
+          const timer = setTimeout(() => { waiting = false; resolve() }, MAILTO_TAB_WAIT_MS)
           tabs.openNew({ accountIds: selection.accountIds, view: selection.view, folder: selection.folder, query: selection.query }, uiText('auto.47da6f0838f0'), async () => {
-            try { await compose() } finally { clearTimeout(timer); resolve() }
+            if (!waiting) return
+            clearTimeout(timer)
+            try { await compose() } finally { resolve() }
           })
         })
       } else {

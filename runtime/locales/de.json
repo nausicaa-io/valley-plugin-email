@@ -312,6 +312,7 @@
   "email.smartGroups.byYou": "Von dir festgelegt",
   "email.smartGroups.byAlways": "Immer von diesem Absender",
   "email.smartGroups.sureBasis": "Zu {{percent}} % sicher",
+  "email.smartGroups.closest": "Am nächsten: {{name}}, zu {{percent}} % sicher",
   "email.smartGroups.starter.receipts": "Belege",
   "email.smartGroups.starter.receiptsWhen": "es ein Beleg, eine Rechnung oder eine Zahlungsbestätigung ist",
   "email.smartGroups.starter.subscriptions": "Abos",

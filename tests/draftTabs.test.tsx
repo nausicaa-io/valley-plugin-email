@@ -71,6 +71,21 @@ describe('Email drafts and tabs (F19)', () => {
     expect((await app.keep()).settings[COMPOSE_TAB_SETTING]).toEqual({ draft: getStore().getSnapshot().compose!.id, tab: opened.instanceId })
   })
 
+  it('reports a Mod-clicked mailto whose new tab the host never activates as not opened, and that tab does not compose later', async () => {
+    const app = await run('tab-a')
+    await app.main.restore(state(7), 'tab-a', { background: true })
+    await waitFor(() => expect(app.shown()).toEqual({ uid: 7, composing: false }))
+    const openMainTab = vi.spyOn(app.mock.api.workspace, 'openMainTab').mockImplementation(() => undefined)
+    const handler = vi.mocked(app.mock.api.links.register).mock.calls[0][0]
+    const started = Date.now()
+    expect(await handler.open({ category: 'email', value: 'mailto:fern@example.test?subject=Canopy' }, { newTab: true })).toEqual({ status: 'cancelled' })
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(getStore().getSnapshot().compose).toBeNull()
+    await app.activate(openMainTab.mock.calls.at(-1)![0]!.instanceId!)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(getStore().getSnapshot().compose).toBeNull()
+  })
+
   it('opens an unsaved draft again only in the tab that showed it, after a reload, a restart, or reopening that tab', async () => {
     let app = await run('tab-a')
     await app.main.restore(state(7), 'tab-a', { background: true })

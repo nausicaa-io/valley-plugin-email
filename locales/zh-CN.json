@@ -312,6 +312,7 @@
   "email.smartGroups.byYou": "由你设置",
   "email.smartGroups.byAlways": "始终来自此发件人",
   "email.smartGroups.sureBasis": "{{percent}}% 确定",
+  "email.smartGroups.closest": "最接近：{{name}}，{{percent}}% 确定",
   "email.smartGroups.starter.receipts": "收据",
   "email.smartGroups.starter.receiptsWhen": "它是收据、发票或付款确认",
   "email.smartGroups.starter.subscriptions": "订阅",

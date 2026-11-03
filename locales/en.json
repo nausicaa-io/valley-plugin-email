@@ -312,6 +312,7 @@
   "email.smartGroups.byYou": "Set by you",
   "email.smartGroups.byAlways": "Always from this sender",
   "email.smartGroups.sureBasis": "{{percent}}% sure",
+  "email.smartGroups.closest": "Closest: {{name}}, {{percent}}% sure",
   "email.smartGroups.starter.receipts": "Receipts",
   "email.smartGroups.starter.receiptsWhen": "it is a receipt, invoice or payment confirmation",
   "email.smartGroups.starter.subscriptions": "Subscriptions",

@@ -17,7 +17,7 @@ interface MailRpc {
 }
 
 export interface MailBackendApi extends MailTransportApi { services?: MailAutomationServices; notifications?: PluginBackendApi['notifications']; lifecycle?: PluginBackendApi['lifecycle']; settings?: PluginBackendApi['settings']; data: PluginDataApi; rpc: MailRpc; i18n?: { t(key: string, params?: Record<string, string | number>): string } }
-interface MailBackendContext extends EmailStoreContext, MailTransportApi { /** Large removals waiting for a second consistent sync, per backend instance. */ removals?: Map<string, Set<number>>; /** The last opened body too large for the cache, as decoded pieces. */ opened?: Map<string, { text?: string[]; html?: string[] }>; services?: MailAutomationServices & Partial<Pick<PluginBackendApi['services'], 'emit'>>; notifications?: PluginBackendApi['notifications']; settings?: PluginBackendApi['settings']; rpc: MailRpc; t: ReturnType<typeof createTranslator> }
+interface MailBackendContext extends EmailStoreContext, MailTransportApi { /** The last opened body too large for the cache, as decoded pieces. */ opened?: Map<string, { text?: string[]; html?: string[] }>; services?: MailAutomationServices & Partial<Pick<PluginBackendApi['services'], 'emit'>>; notifications?: PluginBackendApi['notifications']; settings?: PluginBackendApi['settings']; rpc: MailRpc; t: ReturnType<typeof createTranslator> }
 
 class RemoteMailCacheError extends Error {
   constructor(message: string, readonly result: unknown) { super(message) }
@@ -119,9 +119,18 @@ const methods = {
       const previous = await getEmailAccount(scope, payload.accountId)
       if (!previous || previous.provider !== 'pureemail') throw new MailRefusal('ACCOUNT_NOT_FOUND', scope.t('email.backend.account'))
       const account = { ...previous, address: payload.address, login: payload.login }
-      await scope.credentials.set(credentialName(account.id), payload.password, [accountEndpoint(account, 'imap'), accountEndpoint(account, 'smtp')], MAIL_CREDENTIAL_STORE)
+      const endpoints = [accountEndpoint(account, 'imap'), accountEndpoint(account, 'smtp')]
+      // Check both servers with the new password under a probe name, so a failed check keeps the saved account and password.
+      const probe = { ...account, id: `${account.id}.verify` }
+      await scope.credentials.set(credentialName(probe.id), payload.password, endpoints, MAIL_CREDENTIAL_STORE)
+      try {
+        await verifyImap(scope, probe)
+        await verifySmtp(scope, probe).catch((error: unknown) => { throw new Error(`SMTP: ${mailDiagnostic(error)}`) })
+      } finally {
+        await scope.credentials.delete(credentialName(probe.id), MAIL_CREDENTIAL_STORE)
+      }
+      await scope.credentials.set(credentialName(account.id), payload.password, endpoints, MAIL_CREDENTIAL_STORE)
       await upsertAccount(scope, account)
-      await verifyImap(scope, account)
       const central = await centralMailAccounts(scope)
       const local = (await readEmailAccounts(scope)).filter(item => item.provider === 'pureemail')
       return { account, accounts: [...central, ...local] }
@@ -212,7 +221,9 @@ const methods = {
         if (established === undefined) await epoch(uidValidity)
         const messages = [...synced.messages, ...synced.stored ?? []]
         let count = await mergeFolder(scope, p.accountId, p.folder, synced.messages)
-        const removing = synced.removed && uidValidity !== undefined ? confirmedRemovals(scope.removals ?? new Map(), `${p.accountId}\n${p.folder}\n${uidValidity}`, synced.removed, synced.checked ?? 0) : []
+        const earlier = pendingRemoval(previous?.pendingRemoval, uidValidity)
+        const confirmed = synced.removed && uidValidity !== undefined ? confirmedRemovals(earlier, synced.removed, synced.checked ?? 0) : { removing: [], pending: earlier }
+        const removing = confirmed.removing
         const removed = (removing.length ? await removeFromFolder(scope, p.accountId, p.folder, removing) : 0) + await dropLocalCopies(scope, p.accountId, p.folder)
         if (removed) count = await scope.data.dataset('folder_messages').count({ accountId: p.accountId, folder: p.folder })
         const keepDays = Number(scope.settings?.get().cacheDays)
@@ -223,7 +234,8 @@ const methods = {
           const page = await scope.data.dataset('folder_messages').query({ where: { accountId: p.accountId, folder: p.folder, uid: { in: arrived.slice(offset, offset + 100) } }, select: ['messageId'], limit: 100 })
           arrivedIds.push(...page.rows.map(row => String(row.messageId)))
         }
-        await scope.data.dataset('sync_state').upsert({ accountId: p.accountId, folder: p.folder, uidValidity: uidValidity ?? null, cursor: String(Math.max(established ? Number(previous?.cursor ?? 0) : 0, ...messages.map(message => message.uid))), lastSyncAt: new Date().toISOString() })
+        await scope.data.dataset('sync_state').upsert({ accountId: p.accountId, folder: p.folder, uidValidity: uidValidity ?? null, cursor: String(Math.max(established ? Number(previous?.cursor ?? 0) : 0, ...messages.map(message => message.uid))), lastSyncAt: new Date().toISOString(),
+          ...(confirmed.pending && uidValidity !== undefined ? { pendingRemoval: { uidValidity, uids: confirmed.pending } } : previous?.pendingRemoval != null ? { pendingRemoval: null } : {}) })
         for (const message of messages.filter(message => arrived.includes(message.uid))) {
           await scope.services?.emit?.('workflow.provider', 'message.received', { accountId: p.accountId, folder: p.folder, uid: message.uid, ...(uidValidity ? { uidValidity } : {}), messageId: message.messageId, from: message.from, to: message.to, subject: message.subject, ...(message.automationHeaders ? { automationHeaders: message.automationHeaders } : {}), ...(message.automationHeaders?.inReplyTo?.[0] ? { inReplyTo: message.automationHeaders.inReplyTo[0] } : {}) })
           await scope.notifications?.notify('newMail', {
@@ -264,7 +276,8 @@ const methods = {
       const key = { accountId: input.accountId, folder: input.folder }, current = await scope.data.dataset('sync_state').get(key)
       const state = (row: Record<string, unknown> | null | undefined) => row ? { uidValidity: typeof row.uidValidity === 'number' ? row.uidValidity : null, cursor: typeof row.cursor === 'string' ? row.cursor : null, lastSyncAt: typeof row.lastSyncAt === 'string' ? row.lastSyncAt : null } : null
       if (JSON.stringify(state(current)) !== JSON.stringify(state(input.expected))) throw new MailRefusal('REVISION_CONFLICT', scope.t('email.backend.mailboxChanged'))
-      if (input.previous) await scope.data.dataset('sync_state').upsert({ ...key, ...state(input.previous) })
+      // A large removal waiting for its second sync was seen against the state being replaced, so it goes too.
+      if (input.previous) await scope.data.dataset('sync_state').upsert({ ...key, ...state(input.previous), ...(current?.pendingRemoval != null ? { pendingRemoval: null } : {}) })
       else if (current) await scope.data.dataset('sync_state').delete(key)
       return { syncState: input.previous ? { ...key, ...state(input.previous) } : null }
     }),
@@ -378,14 +391,21 @@ const methods = {
 
 /**
  * A removal of more than ten messages and more than a quarter of the checked cache (an emptied folder included) is applied only
- * for the UIDs that two consecutive consistent answers both reported missing; smaller removals apply at once.
+ * for the UIDs that two consecutive consistent answers both reported missing; smaller removals apply at once. The first answer
+ * waits in the folder's sync state, so a restart between the two syncs keeps it.
  */
-function confirmedRemovals(pending: Map<string, Set<number>>, key: string, removed: number[], checked: number): number[] {
-  if (removed.length <= 10 || removed.length * 4 <= checked) { pending.delete(key); return removed }
-  const earlier = pending.get(key)
-  if (!earlier) { pending.set(key, new Set(removed)); return [] }
-  pending.delete(key)
-  return removed.filter(uid => earlier.has(uid))
+function confirmedRemovals(earlier: number[] | null, removed: number[], checked: number): { removing: number[]; pending: number[] | null } {
+  if (removed.length <= 10 || removed.length * 4 <= checked) return { removing: removed, pending: null }
+  if (!earlier) return { removing: [], pending: removed }
+  const seen = new Set(earlier)
+  return { removing: removed.filter(uid => seen.has(uid)), pending: null }
+}
+
+/** The UIDs an earlier sync of the same folder epoch reported missing, or null. */
+function pendingRemoval(value: unknown, uidValidity: number | undefined): number[] | null {
+  if (uidValidity === undefined || !value || typeof value !== 'object') return null
+  const { uidValidity: epoch, uids } = value as { uidValidity?: unknown; uids?: unknown }
+  return epoch === uidValidity && Array.isArray(uids) && uids.every(uid => Number.isSafeInteger(uid)) ? uids as number[] : null
 }
 
 /** Characters of a body returned by one loadMessageContent reply. */
@@ -472,7 +492,7 @@ export function register(api: MailBackendApi): () => Promise<void> {
   let draining: Promise<void> | undefined
   const scope: MailBackendContext = {
     ...emailStoreContext(api.data), network: api.network, credentials: api.credentials, accounts: api.accounts, services: api.services, t, notifications: api.notifications, settings: api.settings,
-    rpc: { handle: api.rpc.handle, emit: (name, payload) => { if (!disposed) api.rpc.emit(name, payload) } }, removals: new Map(), opened: new Map()
+    rpc: { handle: api.rpc.handle, emit: (name, payload) => { if (!disposed) api.rpc.emit(name, payload) } }, opened: new Map()
   }
   const off = [...Object.entries(methods), ...Object.entries(openedMail)].map(([name, method]) => {
     const handler = async (payload: unknown, operation?: PluginBackendOperationContext) => {

@@ -7,7 +7,7 @@ import { api, React } from './runtime'
 import { formatEmailTimestamp, getStore, messageKey, type EmailSelection, type EmailSnapshot } from './store'
 import { useEmailDateFormat } from './hooks'
 import { messageMenu } from './MessageActions'
-import { uiText } from './localization'
+import { accountFolderLabel, loadedFolderLabel, uiText } from './localization'
 import { emailTabs, type ParkedEmailTab } from './tabs'
 import { folderLabel } from './Panel'
 import type { InteropValueSchema } from '@valley/plugin-sdk'
@@ -140,13 +140,13 @@ async function readMessage(ref: EmailMessageRef): Promise<EmailMessageDetail> {
   return result.data.message
 }
 
-function overviewProperties(subject?: PluginInspectionSubject, snapshot: EmailSnapshot = getStore().getSnapshot()): PluginProperty[] {
+function overviewProperties(subject?: PluginInspectionSubject, snapshot: EmailSnapshot = getStore().getSnapshot(), folderName?: string): PluginProperty[] {
   const target = selection(subject?.view ?? viewState())
   const mailbox = snapshot.mailboxes.find((item) => item.path === target.folder)
   return [
     { id: 'accounts', label: uiText('email.surface.accounts'), value: snapshot.accounts.map((account) => account.address).join('\n') || '—', readOnly: true },
     { id: 'view', label: uiText('email.surface.view'), value: target.view === 'folder' ? uiText('auto.30baa24967e0') : uiText(`email.view.${target.view}`), readOnly: true },
-    ...(target.view === 'folder' ? [{ id: 'folder', label: uiText('auto.30baa24967e0'), value: mailbox ? folderLabel(mailbox) : target.folder, readOnly: true }] : []),
+    ...(target.view === 'folder' ? [{ id: 'folder', label: uiText('auto.30baa24967e0'), value: folderName ?? (mailbox ? folderLabel(mailbox) : target.folder), readOnly: true }] : []),
     ...(target.query ? [{ id: 'query', label: uiText('email.surface.query'), value: target.query, readOnly: true }] : []),
     { id: 'cachedMail', label: uiText('email.cachedMail'), value: snapshot.loadingMessages ? uiText('auto.33ce417454bf') : `${snapshot.messages.length}${snapshot.cursor ? '+' : ''}`, readOnly: true }
   ]
@@ -165,11 +165,31 @@ async function inspect(subject?: PluginInspectionSubject): Promise<PluginPropert
   return target.message ? messageProperties(await readMessage(target.message)) : []
 }
 
+// The Folder row names the mailbox in the inspected tab's own accounts, which need not be the focused list's.
+const ownFolderName = (subject: PluginInspectionSubject | undefined, snapshot: EmailSnapshot): Promise<string> | undefined => {
+  const target = selection(subject?.view ?? viewState())
+  return target.view === 'folder' ? accountFolderLabel(api, snapshot.mailboxesByAccount, target.accountIds, target.folder) : undefined
+}
+async function inspectOverview(subject?: PluginInspectionSubject): Promise<PluginProperty[]> {
+  const snapshot = getStore().getSnapshot()
+  return overviewProperties(subject, snapshot, await ownFolderName(subject, snapshot))
+}
+
 function Overview({ subject }: { subject?: PluginInspectionSubject }): React.ReactElement {
   const store = getStore()
   const snapshot = React.useSyncExternalStore(store.subscribe, store.getSnapshot)
+  const [folderName, setFolderName] = React.useState<{ key: string; name: string }>()
+  const target = selection(subject?.view ?? viewState())
+  const loaded = target.view === 'folder' ? loadedFolderLabel(snapshot.mailboxesByAccount, target.accountIds, target.folder) : undefined
+  const key = JSON.stringify([target.accountIds, target.view, target.folder])
+  React.useEffect(() => {
+    if (loaded !== undefined || target.view !== 'folder') return
+    let active = true
+    void ownFolderName(subject, snapshot)?.then((name) => { if (active) setFolderName({ key, name }) })
+    return () => { active = false }
+  }, [key, loaded])
   return <div className="right-panel-body props-info email-overview"><dl className="props-info-table">
-    {overviewProperties(subject, snapshot).map((field) => <div className="props-info-row" key={field.id}>
+    {overviewProperties(subject, snapshot, loaded ?? (folderName?.key === key ? folderName.name : undefined)).map((field) => <div className="props-info-row" key={field.id}>
       <dt className="props-info-key">{field.label}</dt><dd className="props-info-value email-property-lines">{String(field.value)}</dd>
     </div>)}
   </dl></div>
@@ -298,7 +318,7 @@ export function registerEmailSurfaces(pluginApi: ValleyPluginApi): () => void {
       await store.restoreSelection(selection(state))
     }
   }, { stateSchema: bookmarkStateSchema, itemStateSchema: { ...bookmarkStateSchema, required: [...bookmarkStateSchema.required, "message"] }, description: snapshot => String(snapshot.view.query || snapshot.view.folder || uiText('bookmark.view')), validate: state => { selection(state); return true } }))
-  offs.push(pluginApi.interop.extensions.provide(METADATA_PANEL_SEGMENT_V1, { id: 'email.properties', label: 'Email', labelKey: 'manifest.name', icon: 'mail', pluginSurfaces: ['main_workspace'], inspect: ({ subject }) => overviewProperties(subject), render: ({ subject }) => <Overview subject={subject} /> }))
+  offs.push(pluginApi.interop.extensions.provide(METADATA_PANEL_SEGMENT_V1, { id: 'email.properties', label: 'Email', labelKey: 'manifest.name', icon: 'mail', pluginSurfaces: ['main_workspace'], inspect: ({ subject }) => inspectOverview(subject), render: ({ subject }) => <Overview subject={subject} /> }))
   let offMessage: (() => void) | undefined
   const syncMessageSegment = (): void => {
     const snapshot = store.getSnapshot()

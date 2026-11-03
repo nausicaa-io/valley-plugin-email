@@ -51,7 +51,7 @@ async function cachedMessage(
   return message
 }
 
-const summary = (message: CachedMessage) => ({
+const summary = (message: Omit<CachedMessage, 'text' | 'html' | 'structure'>) => ({
   uid: message.uid,
   messageId: message.messageId,
   from: message.from,
@@ -144,14 +144,11 @@ function emailToolDefinitions(api: ValleyPluginApi): AgentToolDefinition[] {
           const synced = await mailApi(api).syncFolder(account.id, folder, Math.max(limit, 50))
           if (!synced.ok) throw new Error(synced.error ?? uiText('email.agentError.sync', { value: folder }))
         }
-        const result = await mailApi(api).readFolder(account.id, folder)
+        const query = str(args.query).trim()
+        // The cache's content search returns the newest `limit` matches without reading the folder's bodies into this reply.
+        const result = await mailApi(api).queryMessages({ accountId: account.id, view: 'folder', folder, query, limit })
         if (!result.ok) throw new Error(result.error ?? uiText('email.agentError.read', { value: folder }))
-        const query = str(args.query).trim().toLocaleLowerCase()
-        const matches = (result.data?.messages ?? []).filter((message) =>
-          [message.from, message.replyTo, message.to, message.cc, message.subject, message.snippet, message.text]
-            .some((value) => value?.toLocaleLowerCase().includes(query))
-        ).slice(0, limit)
-        return json({ accountId: account.id, folder, query, messages: matches.map(summary) })
+        return json({ accountId: account.id, folder, query: query.toLocaleLowerCase(), messages: (result.data?.messages ?? []).map(summary) })
       }
     },
     {

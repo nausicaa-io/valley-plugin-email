@@ -86,7 +86,7 @@ export function createClassificationQueue(api: ValleyPluginApi, smartGroups: Sma
       const currentMessage = await messages.get({ id: messageId })
       if (currentJob.value?.status !== 'running' || currentJob.value.requestId !== requestId || currentMessage?.contentRevision !== job.contentRevision) return
       await api.data.transaction([
-        { operation: 'upsert', dataset: 'assignments', values: { id: messageId, categoryId: result.categoryId, confidence: result.confidence, source: result.source, manual: false, contentRevision: job.contentRevision, configurationRevision: config.revision, revision: Number(assignment.value?.revision ?? 0) + 1 } },
+        { operation: 'upsert', dataset: 'assignments', values: { id: messageId, categoryId: result.categoryId, confidence: result.confidence, source: result.source, bestCategoryId: result.best?.categoryId ?? null, bestConfidence: result.best?.confidence ?? null, manual: false, contentRevision: job.contentRevision, configurationRevision: config.revision, revision: Number(assignment.value?.revision ?? 0) + 1 } },
         { operation: 'update', dataset: 'classification_jobs', key: { id }, values: { status: 'completed', requestId: null } }
       ], { expected: [{ dataset: 'classification_jobs', key: { id }, revision: currentJob.revision }, { dataset: 'assignments', key: { id: messageId }, revision: assignment.revision }, { dataset: 'assignments', key: config.key, revision: config.marker.revision }] })
       await project(messageId)
@@ -155,7 +155,7 @@ export function createClassificationQueue(api: ValleyPluginApi, smartGroups: Sma
   const assign = (id: string, categoryId: string | null, manual = true) => serialize(async () => {
     const current = await assignments.read({ id })
     const message = await messages.get({ id })
-    await assignments.upsert({ id, categoryId, manual, confidence: null, source: manual ? 'manual' : null, contentRevision: message?.contentRevision ?? null, configurationRevision: null, revision: Number(current.value?.revision ?? 0) + 1 })
+    await assignments.upsert({ id, categoryId, manual, confidence: null, source: manual ? 'manual' : null, bestCategoryId: null, bestConfidence: null, contentRevision: message?.contentRevision ?? null, configurationRevision: null, revision: Number(current.value?.revision ?? 0) + 1 })
     await project(id)
   })
   const recover = async () => {
@@ -177,7 +177,7 @@ export function createClassificationQueue(api: ValleyPluginApi, smartGroups: Sma
       const page = await messages.query({ where: { accountId, categoryId: { in: removed } }, select: ['id'], limit: 200 })
       const rows = page.rows.length ? page.rows : []
       const stale = (await assignments.query({ where: { id: { in: rows.map(row => String(row.id)) }, categoryId: { in: removed } }, limit: 200 })).rows
-      for (const row of stale) await assignments.upsert({ ...row, categoryId: null, manual: false, confidence: null, source: null, configurationRevision: null, revision: Number(row.revision ?? 0) + 1 })
+      for (const row of stale) await assignments.upsert({ ...row, categoryId: null, manual: false, confidence: null, source: null, bestCategoryId: null, bestConfidence: null, configurationRevision: null, revision: Number(row.revision ?? 0) + 1 })
       if (rows.length) await messages.updateMany(rows.map(row => ({ key: { id: String(row.id) }, values: { categoryId: null } })))
       if (page.rows.length < 200) break
     }

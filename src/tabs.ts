@@ -1,7 +1,7 @@
 import type { ValleyPluginApi } from '@valley/plugin-sdk'
 import type { EmailNavigation } from './mailboxController'
 import type { EmailSelection, EmailStore } from './store'
-import { folderLabel, uiText } from './localization'
+import { accountFolderLabel, uiText } from './localization'
 import { api } from './runtime'
 
 /**
@@ -142,11 +142,15 @@ export function createEmailTabs(api: ValleyPluginApi, store: EmailStore): EmailT
   const retitle = (tab: string): void => {
     const entry = tab === focused ? undefined : parked.get(tab)
     if (!entry) return
-    const { view, folder } = entry.navigation?.selection ?? entry.selection
-    const next = entry.title || (view === 'folder' ? folderLabel(store.getSnapshot().mailboxes.find((mailbox) => mailbox.path === folder) ?? { path: folder, name: folder }) : uiText(`email.view.${view}`))
-    if (!next) return
-    api.workspace.setMainTabTitle(next, tab || undefined)
-    if (tab === '') { title = next; void api.settings.set(MAIN_TAB_TITLE_SETTING, next).catch(() => undefined) }
+    const { view, folder, accountIds } = entry.navigation?.selection ?? entry.selection
+    const apply = (next: string): void => {
+      if (!next || disposed || parked.get(tab) !== entry) return
+      api.workspace.setMainTabTitle(next, tab || undefined)
+      if (tab === '') { title = next; void api.settings.set(MAIN_TAB_TITLE_SETTING, next).catch(() => undefined) }
+    }
+    if (entry.title || view !== 'folder') apply(entry.title || uiText(`email.view.${view}`))
+    // The parked tab may show another account than the focused list: its own account names the mailbox.
+    else void accountFolderLabel(api, store.getSnapshot().mailboxesByAccount, accountIds, folder).then(apply)
   }
   const owns = (tab: string): boolean => owner?.tab === tab && store.getSnapshot().compose?.id === owner.draft
   // Follows the live mailbox outside tab switches and restores, which rewrite it on purpose.

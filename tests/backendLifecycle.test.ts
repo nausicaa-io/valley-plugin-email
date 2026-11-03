@@ -176,14 +176,35 @@ describe('backend account work ownership', () => {
     await establishFolderEpoch(host.scope, 'a', 'INBOX', 1)
     await mergeFolder(host.scope, 'a', 'INBOX', [{ ...message, uidValidity: 1 }])
     const verify = vi.spyOn(transport, 'verifyImap').mockResolvedValue(undefined)
+    const smtp = vi.spyOn(transport, 'verifySmtp').mockResolvedValue(undefined)
     const result = await host.call('updateSmtpAccount', { accountId: 'a', address: 'updated@example.test', login: 'login-user', password: 'replacement' })
     expect(result).toMatchObject({ ok: true, data: { account: { id: 'a', login: 'login-user', address: 'updated@example.test' } } })
-    expect(host.api.credentials.set).toHaveBeenCalledWith('a', 'replacement', expect.any(Array), transport.MAIL_CREDENTIAL_STORE)
-    expect(verify).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'a', login: 'login-user' }))
+    expect(host.api.credentials.set).toHaveBeenLastCalledWith('a', 'replacement', expect.any(Array), transport.MAIL_CREDENTIAL_STORE)
+    expect(verify).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'a.verify', login: 'login-user' }))
+    expect(smtp).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'a.verify', login: 'login-user' }))
     expect(await readFolder(host.scope, 'a', 'INBOX')).toHaveLength(1)
     expect(await host.api.data.files.readText('accounts.json')).not.toContain('replacement')
-    expect(host.api.credentials.delete).not.toHaveBeenCalled()
+    expect(host.api.credentials.delete).toHaveBeenCalledOnce()
+      expect(host.api.credentials.delete).toHaveBeenCalledWith('a.verify', transport.MAIL_CREDENTIAL_STORE)
     await host.dispose()
+  })
+
+  it('checks IMAP and SMTP before saving a changed account and keeps the saved one when either fails', async () => {
+    for (const failing of ['imap', 'smtp'] as const) {
+      const host = await fixture(['a'])
+      const before = await host.api.data.files.readText('accounts.json')
+      vi.spyOn(transport, 'verifyImap').mockImplementation(async () => { if (failing === 'imap') throw new Error('LOGIN failed') })
+      vi.spyOn(transport, 'verifySmtp').mockImplementation(async () => { if (failing === 'smtp') throw new Error('535 Authentication failed') })
+      const result = await host.call('updateSmtpAccount', { accountId: 'a', address: 'changed@example.test', login: 'changed', password: 'wrong' })
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining(failing === 'smtp' ? 'SMTP: ' : 'LOGIN failed') })
+      expect(host.api.credentials.set).toHaveBeenCalledOnce()
+      expect(host.api.credentials.set).toHaveBeenCalledWith('a.verify', 'wrong', expect.any(Array), transport.MAIL_CREDENTIAL_STORE)
+      expect(host.api.credentials.delete).toHaveBeenCalledOnce()
+      expect(host.api.credentials.delete).toHaveBeenCalledWith('a.verify', transport.MAIL_CREDENTIAL_STORE)
+      expect(await host.api.data.files.readText('accounts.json')).toBe(before)
+      vi.restoreAllMocks()
+      await host.dispose()
+    }
   })
 
   it('submits an inline reply once and retains an uncertain reply for recovery', async () => {

@@ -8,7 +8,7 @@ export interface SmartGroup { id: string; name: string; decision: string; thresh
 export interface SmartGroupsAccount { groups: SmartGroup[] }
 export interface SmartGroupsConfig { version: 1; enabled: boolean; provider: AiModelRef | null; dailyLimit: number; accounts: Record<string, SmartGroupsAccount> }
 export interface SmartGroupEntry { group: SmartGroup; depth: number; path: string[]; parentId: string | null }
-export type SmartGroupOutcome = { status: 'decided'; categoryId: string | null; confidence: number | null; source: 'rule' | 'ai' | null }
+export type SmartGroupOutcome = { status: 'decided'; categoryId: string | null; confidence: number | null; source: 'rule' | 'ai' | null; /** An ungrouped result's most likely top-level group below its threshold, for threshold tuning. */ best?: { categoryId: string; confidence: number } }
   | { status: 'paused'; reason: 'unavailable' | 'rate-limited'; retryAt: number }
 export type SmartGroupClassifier = (categories: { id: string; description: string }[]) => Promise<AiClassificationResult>
 
@@ -149,6 +149,7 @@ export const hasRules = (groups: SmartGroup[]): boolean => flattenGroups(groups)
 export async function decideSmartGroup(groups: SmartGroup[], message: { sender: string; contactIds: ReadonlySet<string> }, classify?: SmartGroupClassifier): Promise<SmartGroupOutcome> {
   let level = groups
   let chosen: { group: SmartGroup; confidence: number; source: 'rule' | 'ai' } | undefined
+  let best: { group: SmartGroup; confidence: number } | undefined
   for (let depth = 0; level.length && depth < SMART_GROUP_LIMITS.depth; depth++) {
     let next: typeof chosen
     const ruled = level.find(group => group.rules.some(rule => ruleMatches(rule, message.sender, message.contactIds)))
@@ -164,6 +165,7 @@ export async function decideSmartGroup(groups: SmartGroup[], message: { sender: 
         for (const group of eligible) {
           const probability = Number(result.probabilities[group.id] ?? 0)
           if (probability >= group.threshold / 100 && (!next || probability > next.confidence)) next = { group, confidence: probability, source: 'ai' }
+          if (depth === 0 && probability > 0 && (!best || probability > best.confidence)) best = { group, confidence: probability }
         }
       }
     }
@@ -171,7 +173,9 @@ export async function decideSmartGroup(groups: SmartGroup[], message: { sender: 
     chosen = next
     level = next.group.children
   }
-  return { status: 'decided', categoryId: chosen?.group.id ?? null, confidence: chosen ? Math.round(chosen.confidence * 1000) / 1000 : null, source: chosen?.source ?? null }
+  const rounded = (value: number) => Math.round(value * 1000) / 1000
+  return { status: 'decided', categoryId: chosen?.group.id ?? null, confidence: chosen ? rounded(chosen.confidence) : null, source: chosen?.source ?? null,
+    ...(!chosen && best ? { best: { categoryId: best.group.id, confidence: rounded(best.confidence) } } : {}) }
 }
 
 export const accountRevision = (model: AiModelRef | undefined, account: SmartGroupsAccount): Promise<string> => digest(JSON.stringify([model ?? null, account.groups]))

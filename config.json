@@ -462,7 +462,7 @@
     {
       "id": "sync_state",
       "store": "cache",
-      "version": 1,
+      "version": 2,
       "title": "Mail sync state",
       "primaryKey": [
         "accountId",
@@ -486,6 +486,10 @@
         "lastSyncAt": {
           "type": "datetime",
           "nullable": true
+        },
+        "pendingRemoval": {
+          "type": "json",
+          "nullable": true
         }
       },
       "titleKey": "auto.77ccbffa13b7"
@@ -493,7 +497,7 @@
     {
       "id": "assignments",
       "store": "durable",
-      "version": 2,
+      "version": 3,
       "title": "Email category assignments",
       "visibility": "private",
       "sensitivity": "sensitive",
@@ -530,6 +534,14 @@
         },
         "source": {
           "type": "text",
+          "nullable": true
+        },
+        "bestCategoryId": {
+          "type": "text",
+          "nullable": true
+        },
+        "bestConfidence": {
+          "type": "real",
           "nullable": true
         }
       },
@@ -7760,6 +7772,49 @@
           "column": "source",
           "definition": {
             "type": "text",
+            "nullable": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "sync_state-pending-removal-v2",
+      "store": "cache",
+      "fromVersion": 1,
+      "toVersion": 2,
+      "steps": [
+        {
+          "operation": "add-column",
+          "dataset": "sync_state",
+          "column": "pendingRemoval",
+          "definition": {
+            "type": "json",
+            "nullable": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "assignments-best-ungrouped-v3",
+      "store": "durable",
+      "fromVersion": 2,
+      "toVersion": 3,
+      "steps": [
+        {
+          "operation": "add-column",
+          "dataset": "assignments",
+          "column": "bestCategoryId",
+          "definition": {
+            "type": "text",
+            "nullable": true
+          }
+        },
+        {
+          "operation": "add-column",
+          "dataset": "assignments",
+          "column": "bestConfidence",
+          "definition": {
+            "type": "real",
             "nullable": true
           }
         }

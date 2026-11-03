@@ -312,6 +312,7 @@
   "email.smartGroups.byYou": "Elegido por ti",
   "email.smartGroups.byAlways": "Siempre de este remitente",
   "email.smartGroups.sureBasis": "{{percent}} % de seguridad",
+  "email.smartGroups.closest": "Más cercano: {{name}}, {{percent}} % de seguridad",
   "email.smartGroups.starter.receipts": "Recibos",
   "email.smartGroups.starter.receiptsWhen": "sea un recibo, una factura o una confirmación de pago",
   "email.smartGroups.starter.subscriptions": "Suscripciones",

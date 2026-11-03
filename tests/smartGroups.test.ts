@@ -32,14 +32,14 @@ const nobody = { sender: 'shop@store.example', contactIds: new Set<string>() }
 
 describe('smart group decisions', () => {
   it('assigns a group only at or above its own threshold', async () => {
-    expect(await decideSmartGroup([group('receipts', 60)], nobody, fakeProvider({ receipts: 0.59 }).classify)).toEqual({ status: 'decided', categoryId: null, confidence: null, source: null })
+    expect(await decideSmartGroup([group('receipts', 60)], nobody, fakeProvider({ receipts: 0.59 }).classify)).toEqual({ status: 'decided', categoryId: null, confidence: null, source: null, best: { categoryId: 'receipts', confidence: 0.59 } })
     expect(await decideSmartGroup([group('receipts', 60)], nobody, fakeProvider({ receipts: 0.6 }).classify)).toEqual({ status: 'decided', categoryId: 'receipts', confidence: 0.6, source: 'ai' })
     expect(await decideSmartGroup([group('receipts', 0), group('orders', 0)], nobody, fakeProvider({ receipts: 0.2, orders: 0.3 }).classify)).toMatchObject({ categoryId: 'orders' })
   })
 
   it('only considers subgroups once their parent qualifies and keeps the parent when no subgroup does', async () => {
     const failed = fakeProvider({ receipts: 0.55, subscriptions: 0.99 })
-    expect(await decideSmartGroup(tree(), nobody, failed.classify)).toMatchObject({ categoryId: null })
+    expect(await decideSmartGroup(tree(), nobody, failed.classify)).toMatchObject({ categoryId: null, best: { categoryId: 'receipts', confidence: 0.55 } })
     expect(failed.seen).toEqual([['receipts', 'family', 'uncategorized']])
     const parent = fakeProvider({ receipts: 0.8, billing: 0.69 })
     expect(await decideSmartGroup(tree(), nobody, parent.classify)).toEqual({ status: 'decided', categoryId: 'receipts', confidence: 0.8, source: 'ai' })

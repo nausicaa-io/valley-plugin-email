@@ -12,6 +12,9 @@ import { encodeText } from '../src/backend/encoding'
 import { commandContracts } from './commandContracts'
 import { identifyMessage } from '../src/backend/identity'
 
+// Real-size fixtures (cursor page boundaries, a body above the part limit): a few seconds alone, far longer at a high load average.
+const HEAVY_TEST_MS = 60_000
+
 const message: CachedMessage = { uid: 7, messageId: '<canopy@example.test>', from: 'Canopy <canopy@example.test>', to: 'reader@example.test', subject: 'Canopy survey', date: '2026-09-09T10:00:00.000Z', snippet: 'Forest', text: 'Rare forest orchid', flags: [], hasAttachments: false }
 const account: EmailAccount = { id: 'station', provider: 'pureemail', address: 'station@example.test', imap: { host: 'imap.example.test', port: 993, secure: true }, smtp: { host: 'smtp.example.test', port: 465, secure: true }, createdAt: 1 }
 const createCache = (id = 'renamed-mail') => createMockValleyApi({ manifest: { id, datasets: config.datasets as unknown as ValleyPluginManifest['datasets'] } })
@@ -219,7 +222,7 @@ describe('package-owned mail data and RPC', () => {
     } while (cursor)
     expect(ids).toEqual(await Promise.all([...source].reverse().map(async row => (await identifyMessage('station', 'INBOX', row)).logicalId!)))
     expect(new Set(ids).size).toBe(count)
-  })
+  }, HEAVY_TEST_MS)
 
   it('keeps date ties in id order across pages and rejects cursors from another filter', async () => {
     const source = ['<ddd@example.test>', '<bbb@example.test>', '<aaa@example.test>', '<ccc@example.test>'].map((messageId, uid) => ({ ...message, uid, messageId }))

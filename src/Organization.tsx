@@ -37,11 +37,12 @@ export const MessageOrganization: React.FC<{ message: EmailMessageDetail }> = ({
   const { store } = useEmail()
   const config = useSmartGroups()
   const vips = React.useSyncExternalStore(api.settings.subscribe, () => JSON.stringify([...vipAddresses(api)]))
-  const [assignment, setAssignment] = React.useState<{ categoryId: string; manual: boolean; confidence: number | null; source: string | null }>({ categoryId: message.categoryId ?? '', manual: false, confidence: null, source: null })
+  const [assignment, setAssignment] = React.useState<{ categoryId: string; manual: boolean; confidence: number | null; source: string | null; bestCategoryId: string | null; bestConfidence: number | null }>({ categoryId: message.categoryId ?? '', manual: false, confidence: null, source: null, bestCategoryId: null, bestConfidence: null })
   const [error, setError] = React.useState('')
   React.useEffect(() => {
     let active = true
-    const read = () => { void api.data.dataset('assignments').get({ id: message.id }).then(row => { if (active) setAssignment({ categoryId: typeof row?.categoryId === 'string' ? row.categoryId : '', manual: row?.manual === true, confidence: typeof row?.confidence === 'number' ? row.confidence : null, source: typeof row?.source === 'string' ? row.source : null }) }) }
+    const read = () => { void api.data.dataset('assignments').get({ id: message.id }).then(row => { if (active) setAssignment({ categoryId: typeof row?.categoryId === 'string' ? row.categoryId : '', manual: row?.manual === true, confidence: typeof row?.confidence === 'number' ? row.confidence : null, source: typeof row?.source === 'string' ? row.source : null,
+      bestCategoryId: typeof row?.bestCategoryId === 'string' ? row.bestCategoryId : null, bestConfidence: typeof row?.bestConfidence === 'number' ? row.bestConfidence : null }) }) }
     read(); const off = api.data.dataset('assignments').subscribe(read)
     return () => { active = false; off() }
   }, [message.id])
@@ -52,12 +53,15 @@ export const MessageOrganization: React.FC<{ message: EmailMessageDetail }> = ({
   const known = Boolean(assignment.categoryId && findGroupPath(groups, assignment.categoryId))
   const basis = !known ? '' : assignment.manual ? uiText('email.smartGroups.byYou') : assignment.source === 'rule' ? uiText('email.smartGroups.byAlways')
     : assignment.confidence !== null ? uiText('email.smartGroups.sureBasis', { percent: Math.round(assignment.confidence * 100) }) : ''
+  // An ungrouped automatic result names its most likely group below the threshold, so the threshold can be tuned.
+  const closest = known || assignment.manual || !assignment.bestCategoryId || assignment.bestConfidence === null ? undefined : findGroupPath(groups, assignment.bestCategoryId)
+  const hint = closest ? uiText('email.smartGroups.closest', { name: closest.map(group => group.name).join(' / '), percent: Math.round(assignment.bestConfidence! * 100) }) : ''
   const SelectField = api.ui.settings.SelectField
   return <div className="email-message-organization">
     {sender && <button className={`email-vip-star${starred ? ' active' : ''}`} aria-pressed={Boolean(starred)} title={uiText('email.filter.vip')} aria-label={uiText(starred ? 'email.removeVip' : 'email.addVip')} onClick={() => run(store.toggleVip(sender))}>{starred ? '★' : '☆'}</button>}
     {groups.length > 0 && <div className="email-category-picker"><SelectField ariaLabel={uiText('email.group')} value={known ? assignment.categoryId : ''} onChange={value => run(store.assignCategory(message.id, value || null))}
       options={[{ value: '', label: uiText('email.uncategorized') }, ...flattenGroups(groups).map(entry => ({ value: entry.group.id, label: entry.path.join(' / ') }))]} /></div>}
-    {basis && <span className="email-category-basis">{basis}</span>}
+    {(basis || hint) && <span className="email-category-basis">{basis || hint}</span>}
     {assignment.manual && <button onClick={() => run(store.resetCategory(message.id))}>{uiText('email.resetAutomatic')}</button>}
     {error && <span role="alert">{error}</span>}
   </div>

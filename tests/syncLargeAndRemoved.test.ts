@@ -11,6 +11,9 @@ import { attachmentBytes } from '../src/Attachments'
 import { assertCommandOutput } from './commandContracts'
 import { fakeMessage, filePart, imapFolderFake, textPart, type FakeFolder, type FakeModes } from './imapFolderFake'
 
+// Real-size fixtures (cursor page boundaries, a body above the part limit): a few seconds alone, far longer at a high load average.
+const HEAVY_TEST_MS = 60_000
+
 const account: EmailAccount = { id: 'pureemail-fixture', provider: 'pureemail', address: 'hoopoe@birds.example', createdAt: 0,
   imap: { host: 'imap.birds.example', port: 993, secure: true }, smtp: { host: 'smtp.birds.example', port: 465, secure: true } }
 const ref = (uid: number, folder = 'INBOX') => ({ accountId: account.id, folder, uid })
@@ -32,14 +35,17 @@ async function backend(folders: Record<string, FakeFolder>, modes: FakeModes = {
   } })
   const api: MailBackendApi = { data, ...server.api, rpc: { handle: (name, handler) => { handlers.set(name, handler); return () => { handlers.delete(name) } }, emit,
     handleOperation: ((name: string, handler: (payload: unknown, operation: unknown) => Promise<unknown>) => { operations.set(name, handler); return () => { operations.delete(name) } }) as never } }
-  const dispose = register(api)
+  let disposeBackend = register(api)
+  const dispose = () => disposeBackend()
+  // A restart: the backend stops and registers again on the same plugin data.
+  const restart = async () => { await disposeBackend(); disposeBackend = register(api) }
   const call = async <T = Record<string, unknown>>(name: string, payload: unknown) => assertCommandOutput(name, payload, await handlers.get(name)!(payload)) as { ok: boolean; error?: string; data?: T }
   const sync = (folder = 'INBOX') => call<{ fetched: number; total: number }>('syncFolder', { accountId: account.id, folder, limit: 100 })
   // A command operation brings its own data API object on every call, as the CLI and Workflow paths do.
   const syncOperation = async (folder = 'INBOX') => operations.get('command.syncFolder')!({ accountId: account.id, folder, limit: 100 }, { id: crypto.randomUUID(), cancellation: new AbortController().signal, api: { ...server.api, data: { ...mock.api.data } } }) as Promise<{ ok: boolean }>
   const uids = async (folder = 'INBOX') => (await mock.api.data.dataset('folder_messages').query({ where: { accountId: account.id, folder }, select: ['uid'], limit: 1000 })).rows.map(row => Number(row.uid)).sort((a, b) => a - b)
   const read = async (uid: number, folder = 'INBOX') => (await call<{ message: Record<string, unknown> | null }>('readMessage', ref(uid, folder))).data?.message ?? null
-  return { server, mock, scope, call, sync, syncOperation, uids, read, emit, dispose }
+  return { server, mock, scope, call, sync, syncOperation, uids, read, emit, dispose, restart }
 }
 
 afterEach(() => { vi.restoreAllMocks() })
@@ -66,7 +72,7 @@ describe('large messages never block their folder (F2)', () => {
     expect(saved.bytes).toEqual(attachment)
     expect(mail.server.bodies.every(body => body.section.startsWith('BODY[3]<') && body.bytes <= MAIL_SYNC_LIMITS.attachmentSliceBytes)).toBe(true)
     await mail.dispose()
-  })
+  }, HEAVY_TEST_MS)
 
   it('keeps a message that fails once as unavailable, caches the rest, never refetches it on later syncs, and downloads it when opened', async () => {
     const mail = await backend({ INBOX: { uidValidity: 7, messages: [small(1), small(2), small(3)] } }, { failUids: [2] })
@@ -105,7 +111,7 @@ describe('large messages never block their folder (F2)', () => {
     expect(loaded).toBe(text.replace(/\r?\n/g, '\n'))
     expect(mail.server.bodies.filter(body => body.uid === 1 && body.section === 'BODY[1]')).toHaveLength(1)
     await mail.dispose()
-  })
+ }, HEAVY_TEST_MS)
 
   it('serves an opened body too large for the cache from memory, whole, without a second download', async () => {
     const text = `${'Schilfrohrsänger Abschnitt äöüß '.repeat(32)}\n`.repeat(4400)
@@ -194,6 +200,21 @@ describe('sync reconciles deleted mail (F3)', () => {
     expect(await mail.uids()).toHaveLength(15)
     expect(await mail.syncOperation()).toMatchObject({ ok: true })
     expect(await mail.uids()).toEqual([])
+    await mail.dispose()
+  })
+
+  it('keeps a pending large removal across a backend restart and applies it on the next consistent sync', async () => {
+    const folders = { INBOX: { uidValidity: 7, messages: Array.from({ length: 15 }, (_, index) => small(index + 1)) } }
+    const mail = await backend(folders)
+    expect(await mail.sync()).toMatchObject({ ok: true })
+    folders.INBOX.messages = folders.INBOX.messages.slice(0, 2)
+    expect(await mail.sync()).toMatchObject({ ok: true })
+    expect(await mail.uids()).toHaveLength(15)
+    expect(await mail.mock.api.data.dataset('sync_state').get({ accountId: account.id, folder: 'INBOX' })).toMatchObject({ pendingRemoval: { uidValidity: 7, uids: Array.from({ length: 13 }, (_, index) => index + 3) } })
+    await mail.restart()
+    expect(await mail.sync()).toMatchObject({ ok: true })
+    expect(await mail.uids()).toEqual([1, 2])
+    expect(await mail.mock.api.data.dataset('sync_state').get({ accountId: account.id, folder: 'INBOX' })).toMatchObject({ pendingRemoval: null })
     await mail.dispose()
   })
 

@@ -44,6 +44,8 @@ function setup() {
   })
   vi.spyOn(email, 'syncFolder').mockResolvedValue({ ok: true })
   vi.spyOn(email, 'readFolder').mockResolvedValue({ ok: true, data: { messages: [message] } })
+  const { text: _text, ...summary } = message
+  vi.spyOn(email, 'queryMessages').mockResolvedValue({ ok: true, data: { messages: [{ ...summary, id: 'canopy', accountId: account.id, folder: 'INBOX', memberships: [], addresses: { from: [], to: [], cc: [], replyTo: [] } }] } })
   vi.spyOn(email, 'applyMessageAction').mockResolvedValue({
     ok: true,
     data: { action: 'archive', folder: 'INBOX', destinationFolder: 'Archive', messages: [] }
@@ -90,6 +92,8 @@ describe('email assistant tools', () => {
     const found = JSON.parse(String(await provider.execute('search_email_messages', { accountId: account.id, folder: 'INBOX', query: 'moss' })))
     expect(found.messages).toEqual([expect.objectContaining({ uid: 17, subject: 'Canopy update', flagged: true })])
     expect(email.syncFolder).toHaveBeenCalledWith('forest-mail', 'INBOX', 50)
+    expect(email.queryMessages).toHaveBeenCalledWith({ accountId: 'forest-mail', view: 'folder', folder: 'INBOX', query: 'moss', limit: 20 })
+    expect(email.readFolder).not.toHaveBeenCalled()
 
     const read = JSON.parse(String(await provider.execute('read_mail_message', { accountId: account.id, folder: 'INBOX', uid: 17 })))
     expect(read).toMatchObject({ uid: 17, replyTo: 'field-team@example.test', text: expect.stringContaining('Moss cover') })
