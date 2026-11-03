@@ -8,7 +8,7 @@ import { ErrorNotice } from './Notice'
 import { Archive, ChevronDown, EyeOff, Flag, Google, Inbox, Mail, Microsoft, Plus, Reload, Search, Send, Trash, Paperclip, Filter, Tag } from './icons'
 import { SwipeRow } from './SwipeRow'
 import { ContactAvatar, contactName } from './People'
-import { uiText } from './localization'
+import { folderLabel, uiText } from './localization'
 import { formatEmailTimestamp, messageKey, type ComposeDraft, type EmailSnapshot } from './store'
 import { useEmailDateFormat } from './hooks'
 import { emailTabs, revealEmailTab } from './tabs'
@@ -24,10 +24,7 @@ export function FolderIcon({ mailbox }: { mailbox: EmailMailbox }): React.ReactE
   if (mailbox.specialUse === '\\Flagged') return <Flag />
   return <Mail />
 }
-export function folderLabel(mailbox: EmailMailbox): string {
-  const kind = mailbox.specialUse?.replace('\\', '').toLowerCase() || (mailbox.path.toUpperCase() === 'INBOX' ? 'inbox' : '')
-  return ['inbox', 'sent', 'drafts', 'archive', 'all', 'trash', 'junk', 'flagged'].includes(kind) ? uiText(`email.folder.${kind}`) : mailbox.name || mailbox.path
-}
+export { folderLabel }
 
 /** The account's Drafts mailbox: its special-use folder, else a folder named Drafts. */
 export function draftsMailbox(mailboxes: EmailMailbox[]): EmailMailbox | undefined {

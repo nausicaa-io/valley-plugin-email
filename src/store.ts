@@ -15,7 +15,7 @@ import { createMailboxController, type EmailNavigation } from './mailboxControll
 export { messageKey } from './messageController'
 import type { EmailAddress, EmailFilters, EmailGroupRef, EmailMailboxView, EmailMessageAction, EmailMessageDetail, EmailMessageRef, EmailMessageSummary } from './mailTypes'
 import { api } from './runtime'
-import { uiText } from './localization'
+import { folderLabel, uiText } from './localization'
 import { COMPOSE_TAB_SETTING, MAIN_TAB_TITLE_SETTING, focusedTabInstance, noteEmailTabTitle, releaseComposeTab } from './tabs'
 
 export interface ComposeDraft {
@@ -160,7 +160,8 @@ function createStore(api: ValleyPluginApi): EmailStore {
   const activeAccountIds = (): string[] => state.selectedAccountIds.length ? state.selectedAccountIds : state.accounts.map((account) => account.id)
   const updateTitle = (): void => {
     if (disposed) return
-    const title = state.composing ? uiText('auto.47da6f0838f0') : state.selectedMessage?.subject || (state.view === 'folder' ? state.selectedFolder : uiText(`email.view.${state.view}`))
+    const mailbox = state.mailboxes.find((entry) => entry.path === state.selectedFolder) ?? { path: state.selectedFolder, name: state.selectedFolder }
+    const title = state.composing ? uiText('auto.47da6f0838f0') : state.selectedMessage?.subject || (state.view === 'folder' ? folderLabel(mailbox) : uiText(`email.view.${state.view}`))
     api.workspace.setMainTabTitle(title, focusedTabInstance())
     noteEmailTabTitle(title)
   }

@@ -126,6 +126,20 @@ describe('Email 2.1.5: a draft of an account without a Drafts mailbox', () => {
   })
 })
 
+describe('Email 2.1.5: a mailbox tab title uses the mailbox name', () => {
+  it('titles the tab Inbox, not INBOX, after compose ends, also for a background tab the draft left', async () => {
+    const app = await run('tab-a')
+    await app.main.restore({ ...state(7), message: undefined }, 'tab-a', { background: true })
+    await app.main.restore({ ...state(8), message: undefined }, 'tab-b', { background: true })
+    await getStore().startCompose()
+    const setTitle = vi.mocked(app.mock.api.workspace.setMainTabTitle)
+    setTitle.mockClear()
+    await getStore().cancelCompose()
+    await waitFor(() => expect(setTitle).toHaveBeenLastCalledWith('Inbox', 'tab-a'))
+    expect(setTitle.mock.calls.map(([title]) => title)).not.toContain('INBOX')
+  })
+})
+
 describe('Email 2.1.2: tab titles, release and stale owners', () => {
   it('gives a background Email tab without an instance its last title after a reload, before it is visited', async () => {
     let app = await run(undefined, undefined, [undefined, 'tab-b'])

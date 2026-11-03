@@ -1,7 +1,7 @@
 import type { ValleyPluginApi } from '@valley/plugin-sdk'
 import type { EmailNavigation } from './mailboxController'
 import type { EmailSelection, EmailStore } from './store'
-import { uiText } from './localization'
+import { folderLabel, uiText } from './localization'
 import { api } from './runtime'
 
 /**
@@ -143,7 +143,7 @@ export function createEmailTabs(api: ValleyPluginApi, store: EmailStore): EmailT
     const entry = tab === focused ? undefined : parked.get(tab)
     if (!entry) return
     const { view, folder } = entry.navigation?.selection ?? entry.selection
-    const next = entry.title || (view === 'folder' ? folder : uiText(`email.view.${view}`))
+    const next = entry.title || (view === 'folder' ? folderLabel(store.getSnapshot().mailboxes.find((mailbox) => mailbox.path === folder) ?? { path: folder, name: folder }) : uiText(`email.view.${view}`))
     if (!next) return
     api.workspace.setMainTabTitle(next, tab || undefined)
     if (tab === '') { title = next; void api.settings.set(MAIN_TAB_TITLE_SETTING, next).catch(() => undefined) }

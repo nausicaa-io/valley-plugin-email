@@ -92,16 +92,6 @@ describe('Smart groups settings', () => {
     expect(await screen.findByRole('button', { name: 'Newsletters' })).toBeInTheDocument()
   })
 
-  it('gives the daily-allowance number field its own width, so a stacked row still paints the host control', async () => {
-    const mock = mailbox()
-    await mock.api.data.files.writeTextGuarded(SMART_GROUPS_FILE, JSON.stringify(seeded), null)
-    const widths = new Map<string, unknown>()
-    const NumberField = mock.api.ui.settings.NumberField
-    mock.api.ui.settings.NumberField = ((props: React.ComponentProps<typeof NumberField>) => { widths.set(props.ariaLabel ?? '', props.style?.width); return React.createElement(NumberField, props) }) as typeof NumberField
-    dispose = register(mock.api); render(<Settings />)
-    await screen.findByRole('spinbutton', { name: 'Sort at most this many new messages per account a day' })
-    expect(widths.get('Sort at most this many new messages per account a day')).toEqual(expect.any(String))
-  })
 })
 
 describe('Smart groups in the mail view', () => {

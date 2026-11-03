@@ -4,6 +4,7 @@ import de from '../locales/de.json'
 import es from '../locales/es.json'
 import fr from '../locales/fr.json'
 import zhCN from '../locales/zh-CN.json'
+import type { EmailMailbox } from './mailTypes'
 
 const catalogs = { en, de, es, fr, 'zh-CN': zhCN } satisfies BundledPluginTranslationCatalogs
 
@@ -24,4 +25,10 @@ export function initLocalization(api: ValleyPluginApi): void {
 
 export function uiText(key: string, params?: Parameters<ValleyPluginApi['ui']['t']>[1]): string {
   return translate(key, params)
+}
+
+/** A mailbox's display name: the translated name of a special-use mailbox (INBOX → Inbox), else its own name. */
+export function folderLabel(mailbox: Pick<EmailMailbox, 'path' | 'name' | 'specialUse'>): string {
+  const kind = mailbox.specialUse?.replace('\\', '').toLowerCase() || (mailbox.path.toUpperCase() === 'INBOX' ? 'inbox' : '')
+  return ['inbox', 'sent', 'drafts', 'archive', 'all', 'trash', 'junk', 'flagged'].includes(kind) ? uiText(`email.folder.${kind}`) : mailbox.name || mailbox.path
 }

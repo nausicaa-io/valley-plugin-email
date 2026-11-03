@@ -87,8 +87,7 @@ const DailyLimit: React.FC<{ value: number; save(value: number): void }> = ({ va
   const [draft, setDraft] = React.useState<number | null>(value)
   React.useEffect(() => setDraft(value), [value])
   const { NumberField } = api.ui.settings
-  // Host widgets size to their placeholder: an explicit width keeps the control painted when the Row stacks at narrow widths.
-  return <NumberField ariaLabel={uiText('email.dailyAllowance')} min={0} max={10000} step={1} value={draft} onChange={setDraft} style={{ width: '96px' }}
+  return <NumberField ariaLabel={uiText('email.dailyAllowance')} min={0} max={10000} step={1} value={draft} onChange={setDraft}
     onCommit={next => { const clamped = Math.max(0, Math.min(10000, Math.round(next ?? value))); setDraft(clamped); if (clamped !== value) save(clamped) }} />
 }
 
