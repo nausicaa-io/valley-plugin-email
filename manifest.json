@@ -5,10 +5,10 @@
   "version": "2.1.7",
   "description": "Built-in email client. Gmail and Microsoft accounts are signed in once in Settings → Accounts (shared with Calendar); generic SMTP/IMAP (PureMail) mailboxes are added here. Left-sidebar account/folder list, right-sidebar message preview, and a full workspace page to read, sync and compose.",
   "author": [
-    "valley"
+    "nausicaa"
   ],
   "authorUrl": [
-    "https://github.com/valley-app"
+    "https://github.com/nausicaa-io"
   ],
   "license": "MIT",
   "minAppVersion": "0.1.0",
