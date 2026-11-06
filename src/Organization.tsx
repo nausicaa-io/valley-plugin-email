@@ -1,7 +1,6 @@
 import { React, api } from './runtime'
 import { useEmail } from './hooks'
 import { uiText } from './localization'
-import { vipAddresses } from './grouping'
 import { SmartGroupsSettings } from './SmartGroupsSettings'
 import { findGroupPath, flattenGroups, groupFilter, type SmartGroupsConfig } from './smartGroups'
 import type { EmailFilters, EmailMessageDetail } from './mailTypes'
@@ -36,7 +35,6 @@ export const EmailFilterControls: React.FC<{ settings?: boolean }> = ({ settings
 export const MessageOrganization: React.FC<{ message: EmailMessageDetail }> = ({ message }) => {
   const { store } = useEmail()
   const config = useSmartGroups()
-  const vips = React.useSyncExternalStore(api.settings.subscribe, () => JSON.stringify([...vipAddresses(api)]))
   const [assignment, setAssignment] = React.useState<{ categoryId: string; manual: boolean; confidence: number | null; source: string | null; bestCategoryId: string | null; bestConfidence: number | null }>({ categoryId: message.categoryId ?? '', manual: false, confidence: null, source: null, bestCategoryId: null, bestConfidence: null })
   const [error, setError] = React.useState('')
   React.useEffect(() => {
@@ -46,8 +44,6 @@ export const MessageOrganization: React.FC<{ message: EmailMessageDetail }> = ({
     read(); const off = api.data.dataset('assignments').subscribe(read)
     return () => { active = false; off() }
   }, [message.id])
-  const sender = message.addresses.from[0]
-  const starred = sender && (JSON.parse(vips) as string[]).includes(sender.address.toLowerCase())
   const run = (promise: Promise<void>) => { setError(''); void promise.catch(reason => setError(String(reason))) }
   const groups = config.enabled ? config.accounts[message.accountId]?.groups ?? [] : []
   const known = Boolean(assignment.categoryId && findGroupPath(groups, assignment.categoryId))
@@ -58,7 +54,6 @@ export const MessageOrganization: React.FC<{ message: EmailMessageDetail }> = ({
   const hint = closest ? uiText('email.smartGroups.closest', { name: closest.map(group => group.name).join(' / '), percent: Math.round(assignment.bestConfidence! * 100) }) : ''
   const SelectField = api.ui.settings.SelectField
   return <div className="email-message-organization">
-    {sender && <button className={`email-vip-star${starred ? ' active' : ''}`} aria-pressed={Boolean(starred)} title={uiText('email.filter.vip')} aria-label={uiText(starred ? 'email.removeVip' : 'email.addVip')} onClick={() => run(store.toggleVip(sender))}>{starred ? '★' : '☆'}</button>}
     {groups.length > 0 && <div className="email-category-picker"><SelectField ariaLabel={uiText('email.group')} value={known ? assignment.categoryId : ''} onChange={value => run(store.assignCategory(message.id, value || null))}
       options={[{ value: '', label: uiText('email.uncategorized') }, ...flattenGroups(groups).map(entry => ({ value: entry.group.id, label: entry.path.join(' / ') }))]} /></div>}
     {(basis || hint) && <span className="email-category-basis">{basis || hint}</span>}

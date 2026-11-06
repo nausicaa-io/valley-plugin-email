@@ -5,7 +5,7 @@ import { useEmail, useEmailDateFormat, useEmailDisplaySettings } from './hooks'
 import { Compose } from './Compose'
 import { ErrorNotice } from './Notice'
 import { MessageActions } from './MessageActions'
-import { ContactAvatar, contactName, Person } from './People'
+import { ContactAvatar, contactName } from './People'
 import { MessageBody } from './MessageBody'
 import { Attachments, BodyNote } from './Attachments'
 import { Inbox, Plus, Mail } from './icons'
@@ -47,12 +47,10 @@ export const Page: React.FC<MainWorkspaceViewProps> = ({ navigation }) => {
           <header className="email-reader-header">
             <span className="email-reader-avatar"><ContactAvatar address={senderAddress} label={sender} contacts={snap.contacts} /></span>
             <div className="email-reader-summary">
-              <h1 className="email-reader-subject">{selected.subject || uiText('email.noSubject')}</h1>
-              <div className="email-reader-identity">{senderAddress ? <Person address={senderAddress} /> : <span>{sender}</span>}
+              <div className="email-reader-identity"><strong className="email-reader-sender" title={senderAddress?.address || selected.from}>{sender}</strong>
                 <time className="email-reader-date">{formatEmailTimestamp(selected.date, dateFormat, timeFormat, api.ui.language(), true)}</time>
               </div>
-              <details className="email-reader-details" key={selectedKey}>
-                <summary>{uiText('email.messageDetails')}</summary>
+              <h1 className="email-reader-subject">{selected.subject || uiText('email.noSubject')}</h1>
               <dl className="email-reader-addresses">{addressFields.map((field) => <div className="email-reader-meta" key={field.label}>
                 <dt>{field.label}:</dt><dd>{field.addresses.length ? <span className="email-property-people">{field.addresses.map((address, index) => {
                   const name = contactName(address, snap.contacts)
@@ -60,8 +58,8 @@ export const Page: React.FC<MainWorkspaceViewProps> = ({ navigation }) => {
                     {name !== address.address ? <><span className="email-property-name">{name}</span><small>{address.address}</small></> : <span>{address.address}</span>}
                   </span>
                 })}</span> : field.fallback}</dd>
-              </div>)}</dl></details>
-            <MessageOrganization message={selected} />
+              </div>)}</dl>
+              <MessageOrganization message={selected} />
             </div>
           </header>
           <Attachments message={selected} />

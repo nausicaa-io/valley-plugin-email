@@ -5,7 +5,8 @@ import type { CachedMessage } from './mailTypes'
 import { api, React } from './runtime'
 import { getStore, messageKey } from './store'
 import { readEmailDisplaySettings } from './hooks'
-import { Archive, Eye, EyeOff, Flag, Forward, Junk, Reply, ReplyAll, Trash } from './icons'
+import { Archive, Eye, EyeOff, Flag, Forward, Junk, Reply, ReplyAll, Star, Trash } from './icons'
+import { vipAddresses } from './grouping'
 import { uiText } from './localization'
 import { revealEmailTab } from './tabs'
 
@@ -29,6 +30,8 @@ export function messageMenu(message: EmailMessageSummary | EmailMessageDetail): 
     await store.startCompose(mode, result.data.message)
     revealEmailTab()
   }
+  const sender = message.addresses.from[0]
+  const vip = Boolean(sender && vipAddresses(api).has(sender.address.toLowerCase()))
   const { htmlContent } = readEmailDisplaySettings(message.accountId)
   const plainText = snap.bodyOverride?.key === messageKey(message) && snap.bodyOverride.htmlContent === htmlContent ? snap.bodyOverride.plainText : !htmlContent
   return [
@@ -39,6 +42,7 @@ export function messageMenu(message: EmailMessageSummary | EmailMessageDetail): 
       onSelect: () => store.act(message, seen ? 'mark-unread' : 'mark-read') },
     { id: 'flag', label: uiText(flagged ? 'auto.b855c604e861' : 'auto.a774409a00c2'), icon: <Flag filled={flagged} />, enabled: ready,
       onSelect: () => store.act(message, flagged ? 'unflag' : 'flag') },
+    ...(sender ? [{ id: 'vip', label: uiText(vip ? 'email.removeVip' : 'email.addVip'), icon: <Star filled={vip} />, enabled: true, onSelect: () => store.toggleVip(sender) }] : []),
     { id: 'archive', label: uiText('auto.2621c6fd51a5'), icon: <Archive />, enabled: ready && mailboxes.some((mailbox) => ['\\Archive', '\\All'].includes(mailbox.specialUse ?? '') && mailbox.path !== message.folder),
       onSelect: () => store.act(message, 'archive') },
     { id: 'junk', label: uiText('email.moveToJunk'), icon: <Junk />, enabled: ready && mailboxes.some((mailbox) => mailbox.specialUse === '\\Junk' && mailbox.path !== message.folder),

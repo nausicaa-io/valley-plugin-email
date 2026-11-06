@@ -6,10 +6,12 @@ import type { EmailMailboxView } from './mailTypes'
 import { useEmail } from './hooks'
 import { ErrorNotice } from './Notice'
 import { Archive, ChevronDown, EyeOff, Flag, Google, Inbox, Mail, Microsoft, Plus, Reload, Search, Send, Trash, Paperclip, Filter, Tag } from './icons'
+import type { SmartGroupsConfig } from './smartGroups'
+import type { EmailMessageSummary } from './mailTypes'
 import { SwipeRow } from './SwipeRow'
 import { ContactAvatar, contactName } from './People'
 import { folderLabel, uiText } from './localization'
-import { formatEmailTimestamp, messageKey, type ComposeDraft, type EmailSnapshot } from './store'
+import { formatEmailListDate, formatEmailTimestamp, messageKey, type ComposeDraft, type EmailSnapshot } from './store'
 import { useEmailDateFormat } from './hooks'
 import { emailTabs, revealEmailTab } from './tabs'
 
@@ -62,14 +64,28 @@ const DraftEntry: React.FC<{ draft: ComposeDraft }> = ({ draft }) => {
         <div className="email-message-copy">
           <div className="email-message-top"><strong title={recipients.map((entry) => entry.address).join(', ')}>{names}</strong>
             <span className="email-draft-label">{label}</span>
-            {date && <time title={formatEmailTimestamp(date, dateFormat, timeFormat, api.ui.language(), true)}>{formatEmailTimestamp(date, dateFormat, timeFormat, api.ui.language())}</time>}</div>
+            {date && <time title={formatEmailTimestamp(date, dateFormat, timeFormat, api.ui.language(), true)}>{formatEmailListDate(date, dateFormat, api.ui.language())}</time>}</div>
           <div className="email-message-subject">{subject}</div>
           <div className="email-message-snippet">{draft.text.split('\n').find((line) => line.trim())?.trim() ?? ''}</div>
         </div>
-        <span className="email-message-badges" />
       </div>
     </button>
   </div>
+}
+
+// Row pitch in the list: the row's fixed height and its 1px separator; a row with tags adds a 26px tag row.
+const CARD_PITCH = 97
+const TAGGED_CARD_PITCH = 123
+
+/** The tags a message card shows under its preview: its smart group, then VIP, flagged and attachments. */
+function messageTags(message: EmailMessageSummary, config: SmartGroupsConfig): { key: string; label: string; icon?: React.ReactElement; primary?: boolean }[] {
+  const group = config.enabled && message.categoryId ? findGroupPath(config.accounts[message.accountId]?.groups ?? [], message.categoryId) : undefined
+  return [
+    ...(group ? [{ key: 'group', label: group.map((item) => item.name || '…').join(' / '), primary: true }] : []),
+    ...(message.isVip ? [{ key: 'vip', label: uiText('email.filter.vip') }] : []),
+    ...(message.flags.includes('\\Flagged') ? [{ key: 'flagged', label: uiText('auto.f8db8a172be6'), icon: <Flag filled /> }] : []),
+    ...(message.hasAttachments ? [{ key: 'attachments', label: uiText('email.attachments'), icon: <Paperclip /> }] : [])
+  ]
 }
 
 export const AccountPopover: React.FC = () => {
@@ -222,17 +238,18 @@ export const MailboxControls: React.FC<{ compact?: boolean }> = ({ compact = fal
 
 export const Panel: React.FC = () => {
   const { store, snap } = useEmail()
+  // The body is the one scroller: search, status and cards scroll together.
+  const body = React.useRef<HTMLDivElement>(null)
   const list = React.useRef<HTMLDivElement>(null)
   const [viewport, setViewport] = React.useState({ top: 0, height: 720 })
-  const rowHeight = 83
   React.useEffect(() => {
-    const element = list.current
+    const element = body.current
     const view = element?.ownerDocument.defaultView
     if (!element || !view) return
     let frame = 0
     const measure = (): void => {
       frame = 0
-      setViewport({ top: element.scrollTop, height: element.clientHeight || 720 })
+      setViewport({ top: element.scrollTop - (list.current?.offsetTop ?? 0), height: element.clientHeight || 720 })
     }
     const schedule = (): void => { if (!frame) frame = view.requestAnimationFrame(measure) }
     const observer = typeof view.ResizeObserver === 'function' ? new view.ResizeObserver(schedule) : null
@@ -242,13 +259,23 @@ export const Panel: React.FC = () => {
     return () => { observer?.disconnect(); element.removeEventListener('scroll', schedule); if (frame) view.cancelAnimationFrame(frame) }
   }, [snap.loading, snap.selectedAccountId])
   React.useEffect(() => {
-    if (list.current) list.current.scrollTop = 0
-    setViewport(current => ({ ...current, top: 0 }))
+    if (body.current) body.current.scrollTop = 0
+    setViewport(current => ({ ...current, top: -(list.current?.offsetTop ?? 0) }))
   }, [snap.query, snap.view, snap.selectedFolder, snap.selectedAccountIds, snap.filters])
   const draft = showsDraft(snap) ? snap.compose : null
-  // The draft entry sits above the first message row.
-  const first = Math.max(0, Math.min(Math.floor(Math.max(0, viewport.top - (draft ? rowHeight : 0)) / rowHeight) - 5, snap.messages.length - 1))
-  const last = Math.min(snap.messages.length, first + Math.ceil(viewport.height / rowHeight) + 10)
+  const config = useSmartGroups()
+  const tags = React.useMemo(() => snap.messages.map((message) => messageTags(message, config)), [snap.messages, config])
+  // Each card's top within the list; the draft entry sits above the first message card.
+  const tops = React.useMemo(() => {
+    const result = [draft ? CARD_PITCH : 0]
+    for (const entry of tags) result.push(result[result.length - 1] + (entry.length ? TAGGED_CARD_PITCH : CARD_PITCH))
+    return result
+  }, [tags, draft])
+  const firstVisible = tops.findIndex((top, index) => index < snap.messages.length && tops[index + 1] > viewport.top)
+  const first = Math.max(0, (firstVisible < 0 ? snap.messages.length : firstVisible) - 5)
+  let last = first
+  while (last < snap.messages.length && tops[last] < viewport.top + viewport.height) last++
+  last = Math.min(snap.messages.length, last + 5)
   const { dateFormat, timeFormat } = useEmailDateFormat()
   const account = snap.accounts.find((candidate) => candidate.id === snap.selectedAccountId)
   const accountSelection = JSON.stringify(snap.selectedAccountIds.length ? snap.selectedAccountIds : snap.accounts.map((candidate) => candidate.id))
@@ -258,7 +285,7 @@ export const Panel: React.FC = () => {
     {!snap.loading && <div className="email-panel-toolbar">
       {account ? <MailboxControls compact /> : <button className="email-add-account" onClick={() => api.workspace.openOwnSettings()}><Plus />{uiText('auto.98b0ed858ae4')}</button>}
     </div>}
-    <div className="panel-body email-panel-body">
+    <div ref={body} className="panel-body email-panel-body">
       <ErrorNotice onRetry={() => { void store.retry() }} />
       {snap.loading ? <api.ui.ContentLoader label={uiText('auto.33ce417454bf')} compact /> : account ? <>
         <div className="search-field-row">
@@ -268,8 +295,9 @@ export const Panel: React.FC = () => {
         <div ref={list} className="email-message-list" aria-busy={snap.loadingMessages}>
           {draft && <DraftEntry draft={draft} />}
           {!snap.loadingMessages && !snap.messages.length && !draft && (snap.syncing ? <api.ui.ContentLoader label={uiText('auto.33ce417454bf')} compact /> : <div className="email-empty">{uiText('auto.34e618e62f74')}</div>)}
-          {first > 0 && <div aria-hidden="true" style={{ height: first * rowHeight }} />}
-          {snap.messages.slice(first, last).map((message) => {
+          {first > 0 && <div aria-hidden="true" style={{ height: tops[first] - tops[0] }} />}
+          {snap.messages.slice(first, last).map((message, offset) => {
+            const messageTagList = tags[first + offset]
             const messageAccount = snap.accounts.find((candidate) => candidate.id === message.accountId)
             const fromOwn = message.addresses.from.some((entry) => entry.address.toLowerCase() === messageAccount?.address.toLowerCase())
             const person = (fromOwn ? message.addresses.to : message.addresses.from)[0]
@@ -284,18 +312,22 @@ export const Panel: React.FC = () => {
               store.openMessage(message)
               revealEmailTab()
             }}>
-              <div className={`email-message-row${message.flags.includes('\\Seen') ? '' : ' unread'}`}>
-                <span className={`email-message-avatar${message.flags.includes('\\Seen') ? '' : ' unread'}`}><ContactAvatar address={person} label={sender} contacts={snap.contacts} /></span>
+              <div className={`email-message-row${message.flags.includes('\\Seen') ? '' : ' unread'}${messageTagList.length ? ' tagged' : ''}`}>
+                <span className="email-message-avatar"><ContactAvatar address={person} label={sender} contacts={snap.contacts} /></span>
                 <div className="email-message-copy">
-                  <div className="email-message-top"><strong title={person?.address || message.from}>{sender}</strong><time title={formatEmailTimestamp(message.date, dateFormat, timeFormat, api.ui.language(), true)}>{formatEmailTimestamp(message.date, dateFormat, timeFormat, api.ui.language())}</time></div>
+                  <div className="email-message-top"><strong title={person?.address || message.from}>{sender}</strong>
+                    {!message.flags.includes('\\Seen') && <span className="email-unread-dot" aria-label={uiText('auto.07b032b56f7a')} />}
+                    <time title={formatEmailTimestamp(message.date, dateFormat, timeFormat, api.ui.language(), true)}>{formatEmailListDate(message.date, dateFormat, api.ui.language())}</time></div>
                   <div className="email-message-subject">{message.subject || uiText('email.noSubject')}</div>
                   <div className="email-message-snippet">{message.snippet}</div>
+                  {messageTagList.length > 0 && <div className="email-message-tags">{messageTagList.map((tag) => <span key={tag.key} className={`email-tag${tag.primary ? ' primary' : ''}`} title={tag.label}>
+                    {tag.icon}<span>{tag.label}</span>
+                  </span>)}</div>}
                 </div>
-                <span className="email-message-badges">{message.flags.includes('\\Flagged') && <Flag filled />}{message.hasAttachments && <Paperclip />}</span>
               </div>
             </SwipeRow>
           })}
-          {last < snap.messages.length && <div aria-hidden="true" style={{ height: (snap.messages.length - last) * rowHeight }} />}
+          {last < snap.messages.length && <div aria-hidden="true" style={{ height: tops[snap.messages.length] - tops[last] }} />}
           {snap.cursor && <button className="email-load-more" disabled={snap.loadingMessages} onClick={() => { void store.loadMore() }}>{uiText('email.loadMore')}</button>}
         </div>
       </> : null}

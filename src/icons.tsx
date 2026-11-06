@@ -164,3 +164,5 @@ export const Paperclip = (p: IconProps): ReactElement => <Svg {...p}><path d="m2
 export const Filter = (p: IconProps): ReactElement => <Svg {...p}><path d="M4 4h16l-6 7v7l-4 2v-9z" /></Svg>
 
 export const Tag = (p: IconProps): ReactElement => <Svg {...p}><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z" /><circle cx="7.5" cy="7.5" r="1.5" /></Svg>
+
+export const Star = (p: IconProps & { filled?: boolean }): ReactElement => <Svg {...p}><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z" fill={p.filled ? 'currentColor' : 'none'} /></Svg>

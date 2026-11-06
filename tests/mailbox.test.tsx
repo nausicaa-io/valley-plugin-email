@@ -9,7 +9,7 @@ import { MailboxControls, Panel } from '../src/Panel'
 import { Page } from '../src/Page'
 import { Preview } from '../src/Preview'
 import { emailDisplaySettingsKey } from '../src/hooks'
-import { disposeStore, formatEmailTimestamp, getStore } from '../src/store'
+import { disposeStore, formatEmailListDate, formatEmailTimestamp, getStore } from '../src/store'
 import { emailDocument, MessageBody } from '../src/MessageBody'
 import { Person } from '../src/People'
 
@@ -468,6 +468,14 @@ describe('Email mailbox', () => {
     expect(container.querySelector('iframe')).toBeNull()
     expect(surface.getSnapshot()!.actions!.find((item) => item.id === 'body-format')!.label).toBe('Show HTML')
     expect(formatEmailTimestamp(message.date, 'dd.mm.yyyy', '12h', 'en', true)).toBe('30.08.2026 · 11:00 AM')
+  })
+
+  it('labels recent list dates in words and older ones by date only', () => {
+    const now = new Date(2026, 10, 6, 9, 0)
+    const at = (day: number, hour = 12): string => new Date(2026, 10, day, hour).toISOString()
+    expect([6, 5, 4, 3, 2].map((day) => formatEmailListDate(at(day), 'dd.mm.yyyy', 'en', now))).toEqual(['Today', 'Yesterday', '2 days ago', '3 days ago', '02.11.2026'])
+    expect(formatEmailListDate(at(5, 23), 'dd.mm.yyyy', 'de', now)).toBe('Gestern')
+    expect(formatEmailListDate(at(6, 20), 'dd.mm.yyyy', 'en', now)).toBe('Today')
   })
 
   it('toggles Flag directly and requires explicit modal confirmation before moving a message to Trash', async () => {

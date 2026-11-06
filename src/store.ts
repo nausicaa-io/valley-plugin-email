@@ -134,6 +134,16 @@ export function formatEmailTimestamp(value: string, dateFormat: string, timeForm
   return `${dateText} · ${timeText}`
 }
 
+/** A list date: Today, Yesterday and up to three days ago in words, older messages by date only. */
+export function formatEmailListDate(value: string, dateFormat: string, language: string, now = new Date()): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const days = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()) / 86_400_000)
+  if (days > 3) return formatEmailTimestamp(value, dateFormat, '24h', language)
+  const text = new Intl.RelativeTimeFormat(language, { numeric: 'auto' }).format(-Math.max(0, days), 'day')
+  return text.charAt(0).toLocaleUpperCase(language) + text.slice(1)
+}
+
 function createStore(api: ValleyPluginApi): EmailStore {
   const mailSession = createMailSession(api)
   const mail = mailSession.driver
