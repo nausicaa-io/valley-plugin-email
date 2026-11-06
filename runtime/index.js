@@ -120,8 +120,9 @@ var ve={type:"string",maxLength:1048576},ia={type:"boolean"},Hn={type:"integer",
 .email-account-picker-option.active + .email-account-picker-option:hover,.email-account-picker-option:hover + .email-account-picker-option.active { border-top-left-radius:0; border-top-right-radius:0; }
 .email-row-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* The host draws an HTML body as its own layer above this frame. A classic scrollbar keeps its own gutter, which that layer never covers,
-   so the reader shows one scrollbar beside the header and the message alike instead of an overlay scrollbar hidden under the body. */
-.email-reader { flex:1; min-height:0; overflow:auto; scrollbar-width:auto; scrollbar-color:auto; }
+   so the reader shows one scrollbar beside the header and the message alike instead of an overlay scrollbar hidden under the body.
+   The gutter is reserved before the body loads, so the message never shifts left when the scrollbar appears. */
+.email-reader { flex:1; min-height:0; overflow:auto; scrollbar-gutter:stable; scrollbar-width:auto; scrollbar-color:auto; }
 .email-reader::-webkit-scrollbar { width:calc(var(--scrollbar-size, 3px) + 6px); }
 .email-reader::-webkit-scrollbar-track { background:transparent; }
 .email-reader::-webkit-scrollbar-thumb { border:3px solid transparent; border-radius:999px; background:var(--scrollbar-color) padding-box; }
