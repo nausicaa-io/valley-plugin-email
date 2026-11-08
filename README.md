@@ -6,7 +6,7 @@ Global Content Search includes synced message subjects, senders, recipients, and
 
 This repository owns the plugin’s interface, behavior, dependencies, schemas, tests, translations, and compiled releases. It uses Valley manifest API 5 and the injected SDK 6.
 
-This is an external plugin and is not bundled with Valley. An installed copy lives in the vault's `.valley/plugins/packages/github/email/` (installed from GitHub) or `.valley/plugins/packages/local/email/` (installed from a local package). Core and external installations run with the same sandbox, permissions, and SDK/IPC contract. Ordinary vault documents and saved plugin data (`.valley/plugins/data/email/`) keep their existing locations.
+This is an external plugin and is not bundled with Valley. An installed copy lives in the realm's `.valley/plugins/packages/github/email/` (installed from GitHub) or `.valley/plugins/packages/local/email/` (installed from a local package). Core and external installations run with the same sandbox, permissions, and SDK/IPC contract. Ordinary realm documents and saved plugin data (`.valley/plugins/data/email/`) keep their existing locations.
 
 ## Filters and smart groups
 

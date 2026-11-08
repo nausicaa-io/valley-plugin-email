@@ -125,18 +125,18 @@ describe('durable Email drafts', () => {
     })
     await first.store.whenReady
     await first.store.startCompose()
-    first.store.updateDraft({ text: 'Original vault' })
+    first.store.updateDraft({ text: 'Original realm' })
     await waitFor(() => expect(first.dataset.upsert).toHaveBeenCalledTimes(1))
     const disposing = first.dispose()
     const next = setup()
     await next.store.whenReady
     await next.store.startCompose()
-    next.store.updateDraft({ text: 'New vault' })
+    next.store.updateDraft({ text: 'New realm' })
     await next.store.saveDraft()
     held.resolve()
     await disposing
-    expect(first.datasets.get('email.drafts')).toMatchObject([{ draft: { text: 'Original vault' } }])
-    expect(next.datasets.get('email.drafts')).toMatchObject([{ draft: { text: 'New vault' } }])
+    expect(first.datasets.get('email.drafts')).toMatchObject([{ draft: { text: 'Original realm' } }])
+    expect(next.datasets.get('email.drafts')).toMatchObject([{ draft: { text: 'New realm' } }])
   })
 
   it('preserves both versions when hydration discovers a different saved draft', async () => {

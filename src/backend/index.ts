@@ -76,7 +76,7 @@ const methods = {
       )
       // `{ accounts }`, like every other method here and like `EmailAccountsResult`
       // declares. A bare array put `accounts` at `data` itself, so every reader's
-      // `data.accounts` was undefined and `accounts[0]` threw at vault open.
+      // `data.accounts` was undefined and `accounts[0]` threw at realm open.
       return { accounts: [...central, ...decorated] }
     }),
 
