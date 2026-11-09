@@ -379,5 +379,7 @@
   "email.attachment.saveFailed": "Der Anhang konnte nicht gespeichert werden.",
   "email.attachment.tooLarge": "Anhänge über {{size}} MB können hier noch nicht gespeichert werden.",
   "email.body.loadFailed": "Der Nachrichteninhalt konnte nicht geladen werden.",
-  "email.body.truncated": "Diese Nachricht ist zu lang für die vollständige Anzeige: Angezeigt werden die ersten {{shown}} MB von {{total}} MB."
+  "email.body.truncated": "Diese Nachricht ist zu lang für die vollständige Anzeige: Angezeigt werden die ersten {{shown}} MB von {{total}} MB.",
+  "menu.compose": "Verfassen",
+  "menu.syncFolder": "Ordner synchronisieren"
 }

@@ -379,5 +379,7 @@
   "email.attachment.saveFailed": "无法保存附件。",
   "email.attachment.tooLarge": "暂时无法在此保存大于 {{size}} MB 的附件。",
   "email.body.loadFailed": "无法加载邮件正文。",
-  "email.body.truncated": "此邮件过长，无法完整显示：仅显示前 {{shown}} MB（共 {{total}} MB）。"
+  "email.body.truncated": "此邮件过长，无法完整显示：仅显示前 {{shown}} MB（共 {{total}} MB）。",
+  "menu.compose": "写邮件",
+  "menu.syncFolder": "同步文件夹"
 }

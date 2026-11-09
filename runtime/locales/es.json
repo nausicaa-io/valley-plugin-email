@@ -379,5 +379,7 @@
   "email.attachment.saveFailed": "No se pudo guardar el adjunto.",
   "email.attachment.tooLarge": "Los adjuntos de más de {{size}} MB aún no se pueden guardar aquí.",
   "email.body.loadFailed": "No se pudo cargar el cuerpo del mensaje.",
-  "email.body.truncated": "Este mensaje es demasiado largo para mostrarlo completo: se muestran los primeros {{shown}} MB de {{total}} MB."
+  "email.body.truncated": "Este mensaje es demasiado largo para mostrarlo completo: se muestran los primeros {{shown}} MB de {{total}} MB.",
+  "menu.compose": "Redactar",
+  "menu.syncFolder": "Sincronizar carpeta"
 }

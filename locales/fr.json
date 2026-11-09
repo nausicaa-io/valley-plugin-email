@@ -379,5 +379,7 @@
   "email.attachment.saveFailed": "La pièce jointe n’a pas pu être enregistrée.",
   "email.attachment.tooLarge": "Les pièces jointes de plus de {{size}} Mo ne peuvent pas encore être enregistrées ici.",
   "email.body.loadFailed": "Le contenu du message n’a pas pu être chargé.",
-  "email.body.truncated": "Ce message est trop long pour être affiché en entier : affichage des {{shown}} premiers Mo sur {{total}} Mo."
+  "email.body.truncated": "Ce message est trop long pour être affiché en entier : affichage des {{shown}} premiers Mo sur {{total}} Mo.",
+  "menu.compose": "Rédiger",
+  "menu.syncFolder": "Synchroniser le dossier"
 }

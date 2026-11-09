@@ -100,6 +100,7 @@ export function register(api: ValleyPluginApi): () => Promise<void> {
   const offCompose = commandRegistrar(api)({
     id: 'compose',
     outputSchema: emailResults['compose'],
+    menu: { group: 'compose', order: 10, label: 'Compose', labelKey: 'menu.compose' },
     label: 'Email: Compose', labelKey: 'auto.0a3f4e087378',
     sideEffect: 'write',
     run: async () => {
@@ -120,6 +121,7 @@ export function register(api: ValleyPluginApi): () => Promise<void> {
   const offCloseCompose = commandRegistrar(api)({
     id: 'close-compose',
     outputSchema: emailResults['close-compose'],
+    menu: false,
     label: 'Email: Close compose', labelKey: 'email.command.closeCompose',
     sideEffect: 'execute',
     run: async () => {
@@ -131,6 +133,7 @@ export function register(api: ValleyPluginApi): () => Promise<void> {
   const offOpen = commandRegistrar(api)({
     id: 'open-mailbox',
     outputSchema: emailResults['open-mailbox'],
+    menu: false,
     label: 'Email: Open mailbox', labelKey: 'auto.ddf53deccb65',
     sideEffect: 'read',
     run: () => {
@@ -141,6 +144,7 @@ export function register(api: ValleyPluginApi): () => Promise<void> {
   const offSync = commandRegistrar(api)({
     id: 'sync',
     outputSchema: emailResults['sync'],
+    menu: { group: 'mail', order: 20, label: 'Sync Folder', labelKey: 'menu.syncFolder' },
     label: 'Email: Sync folder', labelKey: 'auto.03820524c5cb',
     sideEffect: 'write',
     run: async () => {
