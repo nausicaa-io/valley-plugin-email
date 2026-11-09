@@ -572,10 +572,14 @@ export function register(api: MailBackendApi): () => Promise<void> {
   }))
   const failures = new Map<string, number>()
   let polling: Promise<void> | undefined
+  let pollTimer: ReturnType<typeof setTimeout> | undefined
+  let accountCount = 0
   const poll = (): void => {
     if (disposed || polling || !api.notifications) return
+    clearTimeout(pollTimer)
     polling = (async () => {
       const accounts = [...await centralMailAccounts(scope), ...await readEmailAccounts(scope)]
+      accountCount = accounts.length
       for (const account of accounts) {
         if (disposed) return
         try {
@@ -590,9 +594,12 @@ export function register(api: MailBackendApi): () => Promise<void> {
           }
         }
       }
-    })().catch(() => undefined).finally(() => { polling = undefined })
+    })().catch(() => undefined).finally(() => {
+      polling = undefined
+      // A realm without mail accounts only checks whether one has appeared; opening Email also syncs.
+      if (!disposed) pollTimer = setTimeout(poll, accountCount ? 60_000 : 15 * 60_000)
+    })
   }
-  const timer = api.notifications ? setInterval(poll, 60_000) : undefined
   const offResume = api.lifecycle?.onResume(poll)
   let initialPoll: ReturnType<typeof setTimeout> | undefined
   const startPolling = () => { if (!disposed && api.notifications) initialPoll = setTimeout(poll, 0) }
@@ -603,7 +610,7 @@ export function register(api: MailBackendApi): () => Promise<void> {
     disposed = true
     workflow?.dispose()
     clearTimeout(initialPoll)
-    clearInterval(timer)
+    clearTimeout(pollTimer)
     offResume?.()
     const accepted = work.dispose()
     const unregistering = off.map(dispose => { try { dispose(); return Promise.resolve() } catch (error) { return Promise.reject(error) } })

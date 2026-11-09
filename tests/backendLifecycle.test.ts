@@ -64,6 +64,28 @@ async function fixture(ids = ['a', 'b'], i18n?: MailBackendApi['i18n'], services
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers() })
 
 describe('backend account work ownership', () => {
+  it('polls an account every minute but only checks every 15 minutes without one', async () => {
+    vi.useFakeTimers()
+    const interval = vi.spyOn(globalThis, 'setInterval')
+    const fetch = vi.spyOn(transport, 'fetchFolder').mockResolvedValue({ messages: [], uidValidity: 1 })
+    const notifications = { notify: vi.fn() } as unknown as MailBackendApi['notifications']
+    const host = await fixture(['a'], undefined, undefined, notifications)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetch).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    await host.dispose()
+    expect(interval).not.toHaveBeenCalled()
+    fetch.mockClear()
+    const empty = await fixture([], undefined, undefined, notifications)
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    expect(fetch).not.toHaveBeenCalled()
+    await empty.dispose()
+    await vi.advanceTimersByTimeAsync(60 * 60_000)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('starts automatic sync in a later turn and cancels that startup when disposed', async () => {
     vi.useFakeTimers()
     const fetch = vi.spyOn(transport, 'fetchFolder').mockResolvedValue({ messages: [], uidValidity: 1 })
@@ -544,7 +566,7 @@ describe('backend account work ownership', () => {
     const closing = deferred(), writing = deferred()
     const bytes = new TextEncoder().encode('* OK ready\r\n* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\nV1 OK caps\r\n+ \r\nV2 OK authenticated\r\n* LIST () "/" "INBOX"\r\nV3 OK listed\r\n')
     vi.mocked(host.api.network.open).mockResolvedValue('physical-socket')
-    vi.mocked(host.api.network.read).mockResolvedValue({ base64: encodeBytes(bytes), done: false })
+    vi.mocked(host.api.network.read).mockResolvedValue({ base64: encodeBytes(bytes), done: false } as never)
     vi.mocked(host.api.network.close).mockImplementation(async () => { await closing.promise })
     const transaction = host.api.data.transaction
     const save = vi.spyOn(host.api.data, 'transaction').mockImplementationOnce(async (...args) => { await writing.promise; return transaction(...args) })

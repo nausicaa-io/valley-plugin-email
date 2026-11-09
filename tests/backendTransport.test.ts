@@ -14,6 +14,7 @@ function transport(replies: string, chunkSize = 7) {
   const api: MailTransportApi = {
     network: {
       fetch: vi.fn(), open: vi.fn(async () => 'socket'),
+      // @ts-expect-error The mock only serves the base64 overload of network.read.
       read: vi.fn(async () => { const chunk = bytes.slice(position, position += chunkSize); return { base64: encodeBytes(chunk), done: position >= bytes.length } }),
       write: vi.fn(async (_id, base64) => { writes.push(new TextDecoder().decode(decodeBytes(base64))) }),
       startTls: vi.fn(async () => undefined), close: vi.fn(async () => undefined)
@@ -51,7 +52,7 @@ describe('package-owned IMAP and SMTP', () => {
   it('waits between empty socket reads and bounds consecutive empty responses', async () => {
     vi.useFakeTimers()
     const fixture = transport('')
-    vi.mocked(fixture.api.network.read).mockResolvedValue({ base64: '', done: false })
+    vi.mocked(fixture.api.network.read).mockResolvedValue({ base64: '', done: false } as never)
     const result = verifyImap(fixture.api, account)
     const rejection = expect(result).rejects.toThrow('repeatedly returned no data')
     await vi.advanceTimersByTimeAsync(0)
@@ -233,7 +234,7 @@ describe('package-owned IMAP and SMTP', () => {
     const write = fixture.api.network.write
     const failing = name === 'the connection drops while the body is sent' ? 'Hello' : name === 'writing the end of DATA fails' ? '\r\n.\r\n' : undefined
     if (failing) vi.mocked(write).mockImplementation(async (_id, base64) => {
-      const text = new TextDecoder().decode(decodeBytes(base64))
+      const text = new TextDecoder().decode(decodeBytes(base64 as string))
       if (text.includes(failing)) throw new Error('socket closed')
       fixture.writes.push(text)
     })

@@ -99,6 +99,7 @@ export function imapFolderFake(folders: Record<string, FakeFolder>, modes: FakeM
     network: {
       fetch: vi.fn(),
       open: vi.fn(async () => { output = []; selected = undefined; send('* OK ready\r\n'); return 'socket' }),
+      // @ts-expect-error The mock only serves the base64 overload of network.read.
       read: vi.fn(async (_id: string, max: number) => {
         const taken: Uint8Array[] = []
         let size = 0

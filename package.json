@@ -1,6 +1,6 @@
 {
   "name": "@valley/plugin-email",
-  "version": "2.1.7",
+  "version": "2.1.8",
   "license": "MIT",
   "private": true,
   "type": "module",
