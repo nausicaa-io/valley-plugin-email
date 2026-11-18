@@ -1198,9 +1198,16 @@
     "backend": "runtime/backend.js",
     "activation": {
       "backend": [
-        "background",
         "capability"
-      ]
+      ],
+      "wake": {
+        "notifications": true,
+        "accounts": true,
+        "resume": true
+      },
+      "idle": {
+        "stopAfterMs": 600000
+      }
     },
     "services": [
       {

@@ -55,6 +55,8 @@ function mailMethod<Schema extends z.ZodTypeAny, Result>(schema: Schema, run: (s
 const CACHED_READS = new Set(['queryMessages', 'readMessage'])
 const CACHE_REPLACING = new Set(['removeAccount', 'restoreAccount', 'restoreSyncState', 'forgetCachedMessage'])
 
+const ACCOUNT_REGISTRY_CHANGES = new Set(['addSmtpAccount', 'updateSmtpAccount', 'removeAccount', 'restoreAccount'])
+
 const methods = {
   queryMessages: mailMethod(z.object({
     accountId: z.string().min(1), view: z.enum(['recent', 'unread', 'flagged', 'folder']),
@@ -510,11 +512,14 @@ export function register(api: MailBackendApi): () => Promise<void> {
       if (name === 'restoreAccount' && input && 'restore' in input) keys.push(`account:${String((input.restore as { account: { id: unknown } }).account.id)}`)
       if (name === 'addSmtpAccount' || name === 'updateSmtpAccount' || name === 'removeAccount' || name === 'restoreAccount' || name === 'listAccounts') keys.push('account-registry')
       const bytes = new TextEncoder().encode(JSON.stringify(input ?? null)).length
-      return { ok: true, data: await work.run(keys, bytes, async () => {
+      const data = await work.run(keys, bytes, async () => {
         operation?.cancellation.throwIfAborted()
         const context = operation ? { ...scope, ...emailStoreContext(operation.api.data), network: operation.api.network, credentials: operation.api.credentials, accounts: operation.api.accounts, services: operation.api.services } : scope
         return method.run(context, input)
-      }) }
+      })
+      // An account added, changed or removed in Email starts or ends the background sync at once (and with it keep-alive).
+      if (ACCOUNT_REGISTRY_CHANGES.has(name)) queueMicrotask(() => poll())
+      return { ok: true, data }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? mailDiagnostic(error) : 'Mail operation failed.',
         ...(error instanceof RemoteMailCacheError ? { outcome: 'remote-complete' as const, data: error.result } : {}),
@@ -574,8 +579,11 @@ export function register(api: MailBackendApi): () => Promise<void> {
   let polling: Promise<void> | undefined
   let pollTimer: ReturnType<typeof setTimeout> | undefined
   let accountCount = 0
+  let pollAgain = false
   const poll = (): void => {
-    if (disposed || polling || !api.notifications) return
+    if (polling) { pollAgain = true; return }
+    if (disposed || !api.notifications) return
+    pollAgain = false
     clearTimeout(pollTimer)
     polling = (async () => {
       const accounts = [...await centralMailAccounts(scope), ...await readEmailAccounts(scope)]
@@ -596,10 +604,21 @@ export function register(api: MailBackendApi): () => Promise<void> {
       }
     })().catch(() => undefined).finally(() => {
       polling = undefined
-      // A realm without mail accounts only checks whether one has appeared; opening Email also syncs.
-      if (!disposed) pollTimer = setTimeout(poll, accountCount ? 60_000 : 15 * 60_000)
+      if (disposed) return
+      if (pollAgain) { poll(); return }
+      // With mail accounts the backend stays resident and syncs every minute (GODS G6: keep-alive); without one it may
+      // sleep: a change of the host accounts wakes it (wake.accounts) and opening Email calls it. A host without keep-alive
+      // keeps checking every 15 minutes whether an account has appeared.
+      const reason = accountCount ? 'Mail accounts sync' : null
+      if (hostKeepAlive && reason !== keptAlive) { keptAlive = reason; void api.lifecycle?.keepAlive?.(reason).catch(() => undefined) }
+      if (accountCount) pollTimer = setTimeout(poll, 60_000)
+      else if (!hostKeepAlive) pollTimer = setTimeout(poll, 15 * 60_000)
     })
   }
+  const hostKeepAlive = typeof api.lifecycle?.keepAlive === 'function'
+  let keptAlive: string | null | undefined
+  const accountEvents = (api.accounts as { subscribe?: (listener: () => void) => () => void } | undefined)?.subscribe
+  const offAccounts = hostKeepAlive && typeof accountEvents === 'function' ? accountEvents.call(api.accounts, () => poll()) : undefined
   const offResume = api.lifecycle?.onResume(poll)
   let initialPoll: ReturnType<typeof setTimeout> | undefined
   const startPolling = () => { if (!disposed && api.notifications) initialPoll = setTimeout(poll, 0) }
@@ -612,6 +631,7 @@ export function register(api: MailBackendApi): () => Promise<void> {
     clearTimeout(initialPoll)
     clearTimeout(pollTimer)
     offResume?.()
+    offAccounts?.()
     const accepted = work.dispose()
     const unregistering = off.map(dispose => { try { dispose(); return Promise.resolve() } catch (error) { return Promise.reject(error) } })
     draining = Promise.allSettled([accepted, ...unregistering]).then(results => {

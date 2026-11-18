@@ -39,7 +39,7 @@ const message: CachedMessage = { uid: 1, messageId: '<survey@example.test>', fro
 const account = (id: string): EmailAccount => ({ id, provider: 'pureemail', address: `${id}@example.test`, createdAt: 0,
   imap: { host: 'imap.example.test', port: 993, secure: true }, smtp: { host: 'smtp.example.test', port: 465, secure: true } })
 
-async function fixture(ids = ['a', 'b'], i18n?: MailBackendApi['i18n'], services?: MailBackendApi['services'], notifications?: MailBackendApi['notifications'], captureOperations = false) {
+async function fixture(ids = ['a', 'b'], i18n?: MailBackendApi['i18n'], services?: MailBackendApi['services'], notifications?: MailBackendApi['notifications'], captureOperations = false, lifecycle?: MailBackendApi['lifecycle'], onAccounts?: (listener: () => void) => void) {
   const mock = createMockValleyApi({ manifest: { id: 'email', datasets: config.datasets as unknown as ValleyPluginManifest['datasets'] } })
   const scope = emailStoreContext(mock.api.data)
   for (const id of ids) await upsertAccount(scope, account(id))
@@ -51,7 +51,8 @@ async function fixture(ids = ['a', 'b'], i18n?: MailBackendApi['i18n'], services
     services,
     notifications,
     data: mock.api.data,
-    accounts: { list: vi.fn(async () => []), authorize: vi.fn() },
+    accounts: { list: vi.fn(async () => []), authorize: vi.fn(), ...(onAccounts ? { subscribe: (listener: () => void) => { onAccounts(listener); return () => {} } } : {}) } as MailBackendApi['accounts'],
+    ...(lifecycle ? { lifecycle } : {}),
     credentials: { presence: vi.fn(async () => 'stored' as const), state: vi.fn(async () => 'ok' as const), set: vi.fn(), delete: vi.fn(), handle: vi.fn(), write: vi.fn() },
     network: { fetch: vi.fn(), open: vi.fn(), read: vi.fn(), write: vi.fn(), startTls: vi.fn(), close: vi.fn(async () => {}) },
     rpc: { handle: (name, handler) => { handlers.set(name, handler); return () => { handlers.delete(name) } }, emit: vi.fn(), ...(captureOperations ? { handleOperation } : {}) }
@@ -84,6 +85,32 @@ describe('backend account work ownership', () => {
     await empty.dispose()
     await vi.advanceTimersByTimeAsync(60 * 60_000)
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('holds keep-alive while accounts exist, arms no check without one, and syncs at once when one is added or the host accounts change (GODS G6)', async () => {
+    vi.useFakeTimers()
+    const fetch = vi.spyOn(transport, 'fetchFolder').mockResolvedValue({ messages: [], uidValidity: 1 })
+    const notifications = { notify: vi.fn() } as unknown as MailBackendApi['notifications']
+    const keepAlive = vi.fn(async (_reason: string | null) => {})
+    let accountsChanged: (() => void) | undefined
+    const lifecycle = { onResume: () => () => {}, keepAlive } as unknown as MailBackendApi['lifecycle']
+    const empty = await fixture([], undefined, undefined, notifications, false, lifecycle, listener => { accountsChanged = listener })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(keepAlive.mock.calls).toEqual([[null]])
+    expect(vi.getTimerCount()).toBe(0)
+    await upsertAccount(empty.scope, account('c'))
+    accountsChanged!()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(keepAlive).toHaveBeenLastCalledWith('Mail accounts sync')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(keepAlive).toHaveBeenCalledTimes(2)
+    await empty.call('removeAccount', { accountId: 'c' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(keepAlive).toHaveBeenLastCalledWith(null)
+    expect(vi.getTimerCount()).toBe(0)
+    await empty.dispose()
   })
 
   it('starts automatic sync in a later turn and cancels that startup when disposed', async () => {

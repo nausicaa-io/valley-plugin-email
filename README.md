@@ -54,3 +54,7 @@ Valley release maintainers explicitly import the compiled artifact into the appl
 The backend explicitly registers its supported blocks through `registerWorkflowContribution`. Workflow calls the owning operations with their original authentication, cancellation, grants, revisions, and receipts. The catalogue publishes Draft-07 parameter and port contracts; credential administration and approval bypasses are excluded. Workflow availability is configured separately in Workflow → Plugins. Existing account, connection, and profile settings remain owned by this plugin.
 
 Workflow output collections are explicit: `listAccounts` → `$.accounts`, `listFolders` → `$.mailboxes`, `readFolder` → `$.messages`, `queryMessages` → `$.messages`, `parseAddresses` → `$.addresses`, `applyMessageAction` → `$.messages`. Selectors are relative to each execution item’s `json`. Folder listing deliberately selects structured mailboxes rather than the duplicate folder-name aliases. Message reads and message actions select the returned message list; single-message headers, addresses and attachment metadata remain attributes.
+
+## When the backend runs
+
+While mail accounts exist the Email backend holds a keep-alive and syncs every minute, also after the next launch. Without an account it starts on first use and stops after ten idle minutes; a change of the accounts in Settings wakes it, and adding an account in Email starts the sync at once.
