@@ -11,7 +11,7 @@
  * Rows open the message in the Email page.
  */
 import codeBlockExamples from './codeBlockExamples.json'
-import { React, api } from './runtime'
+import { React, api, opensInNewTab } from './runtime'
 import type { FC } from 'react'
 import type { EmailMessageRef, EmailMessageSummary } from './mailTypes'
 import type { CachedMessage } from './mailTypes'
@@ -20,7 +20,7 @@ import { contactName } from './People'
 import { fenceInt, parseFenceParams } from '@valley/plugin-sdk/fenceParams'
 import { getStore } from './store'
 import { uiText } from './localization'
-import { revealEmailTab } from './tabs'
+import { emailTabs, revealEmailTab } from './tabs'
 
 const STYLE_ID = 'notes-email-fence-styles'
 
@@ -86,7 +86,12 @@ const EmailFence: FC<{ code: string }> = ({ code }) => {
   const params = parseFenceParams(code)
   const limit = fenceInt(params, 'limit', 50) ?? 5
 
-  const open = (message: EmailMessageRef | null): void => {
+  const open = (message: EmailMessageSummary | null, event?: { metaKey: boolean; ctrlKey: boolean; button?: number }): void => {
+    const tabs = event && opensInNewTab(event) ? emailTabs() : null
+    if (tabs) {
+      tabs.openNew({ accountIds: [...snap.selectedAccountIds], view: snap.view, folder: snap.selectedFolder, query: snap.query, ...(message ? { message: { accountId: message.accountId, folder: message.folder, uid: message.uid } } : {}) }, message?.subject || undefined)
+      return
+    }
     if (message !== null) store.openMessage(message)
     revealEmailTab()
   }
@@ -108,7 +113,7 @@ const EmailFence: FC<{ code: string }> = ({ code }) => {
 
   return (
     <>
-      <div className="email-fence-head" onClick={() => open(null)} title={uiText('auto.aa14c20ab180')}>
+      <div className="email-fence-head" onClick={(event) => open(null, event)} title={uiText('auto.aa14c20ab180')}>
         <span className="t">{uiText('auto.be36d4779772')}{' '}{mailboxTitle}</span>
         <span className="c">
           {snap.syncing ? uiText('auto.f8b9f13e52cc') : uiText('auto.3791d49b494b', { p0: shown.length })}
@@ -119,7 +124,7 @@ const EmailFence: FC<{ code: string }> = ({ code }) => {
         <div
           key={message.id}
           className={`email-fence-row ${isUnread(message) ? 'unread' : ''}`}
-          onClick={() => open(message)}
+          onClick={(event) => open(message, event)}
           title={message.subject}
         >
           <div className="top">
