@@ -63,7 +63,7 @@ export const MessageActions: React.FC<{ message: EmailMessageDetail; compact?: b
       {group.map((id) => {
         const item = items.find((candidate) => candidate.id === id)!
         return <button key={id} className={`email-icon-btn${id === 'flag' && flagged ? ' email-flagged' : ''}`} title={item.label} aria-label={item.label}
-          aria-pressed={id === 'flag' ? flagged : undefined} disabled={!item.enabled} onClick={() => { void item.onSelect?.() }}>{item.icon}</button>
+          aria-pressed={id === 'flag' ? flagged : undefined} disabled={!item.enabled} onClick={() => { void item.onSelect?.({ newTab: false }) }}>{item.icon}</button>
       })}
 
     </div>)}
