@@ -96,6 +96,23 @@ describe('durable classification queue', () => {
     expect(await mock.api.data.dataset('assignments').get({ id: 'wetland-message' })).toMatchObject({ categoryId: 'canopy' })
   })
 
+  it('strips only the deleted group when a message belongs to multiple groups, including secondary groups', async () => {
+    const { mock, queue, ids, groups } = await setup(2)
+    await groups.ready
+    await groups.update(config => {
+      config.accounts.forest.groups.push({ id: 'moss', name: 'Moss', decision: 'Moss mail', threshold: 60, rules: [], children: [] })
+    })
+    await queue.assignCategories(ids[0], ['canopy', 'moss'])
+    await queue.assignCategories(ids[1], ['moss', 'canopy'])
+    await groups.update(config => {
+      config.accounts.forest.groups = config.accounts.forest.groups.filter(group => group.id !== 'canopy')
+    })
+    await vi.waitFor(async () => expect(await mock.api.data.dataset('assignments').get({ id: ids[0] })).toMatchObject({ categoryId: 'moss', categoryIds: ['moss'], manual: true }))
+    expect(await mock.api.data.dataset('assignments').get({ id: ids[1] })).toMatchObject({ categoryId: 'moss', categoryIds: ['moss'], manual: true })
+    expect(await mock.api.data.dataset('messages').get({ id: ids[0] })).toMatchObject({ categoryId: 'moss', categoryIds: ['moss'], categoryKeys: '|moss|' })
+    expect(await mock.api.data.dataset('messages').get({ id: ids[1] })).toMatchObject({ categoryId: 'moss', categoryIds: ['moss'], categoryKeys: '|moss|' })
+  })
+
   it('keeps cancellation authoritative when a provider completes afterward', async () => {
     const { mock, queue, ids } = await setup()
     let finish!: (result: AiClassificationResult) => void

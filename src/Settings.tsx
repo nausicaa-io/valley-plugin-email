@@ -1,4 +1,4 @@
-import { OrganizationSettings } from './Organization'
+import { SmartGroupsSettings } from './SmartGroupsSettings'
 import { mailApi } from './mailApi'
 import { React, api } from './runtime'
 import type { FC, ReactNode } from 'react'
@@ -6,19 +6,23 @@ import type { EmailAccount, EmailConnectionResult } from './mailTypes'
 import { emailDisplaySettingsKey, readEmailDisplaySettings, useEmail, useEmailDisplaySettings, type EmailDisplaySettings } from './hooks'
 import { ChevronLeft, ChevronRight, Google, Mail, Microsoft, Plus, Trash, Warning } from './icons'
 import { uiText } from './localization'
+import { readContactsRoot } from './vcfContacts'
 
 /**
- * Email settings as the same full-bleed list page AI Providers and Accounts use:
- * a header band with `+`, one row per mailbox, and a detail page behind each row.
- * Google/Microsoft sign-in is centralized in Settings → Accounts (one login powers
- * Mail + Calendar), so `+` only adds a local PureMail (generic IMAP/SMTP) mailbox
- * and an OAuth account's detail page points back at Accounts. The "where do
- * Google and Microsoft live" explanation belongs in the page-information card
- * (the manifest description), never as a paragraph above the list.
+ * Email settings:
+ * - Main page (`section === undefined`): Mail accounts list/detail, Contacts (.vcf folder),
+ *   and Sync & offline mail settings — clean Valley-style sections.
+ * - Sub-page (`section === 'grouping'`): Dedicated Grouping & AI sorting page with overviewable
+ *   icon/colour groups, presets (Marketing & Promotions, Receipts, Orders, etc.) and batch sorting.
  */
 type View = { kind: 'list' } | { kind: 'add' } | { kind: 'account'; id: string }
 
-export const Settings: FC = () => {
+export const Settings: FC<{ section?: string }> = ({ section }) => {
+  if (section === 'grouping') return <SmartGroupsSettings />
+  return <GeneralSettings />
+}
+
+const GeneralSettings: FC = () => {
   const { store, snap } = useEmail()
   const [view, setView] = React.useState<View>({ kind: 'list' })
   const backToList = (): void => setView({ kind: 'list' })
@@ -55,31 +59,112 @@ export const Settings: FC = () => {
   }
 
   return (
-    <section className="settings-section email-settings settings-listpage">
-      <div className="settings-listpage-header">
-        <h4 className="settings-label">{uiText('auto.65b0d1700502')}</h4>
-        <Button
-          className="settings-listpage-add"
-          size="small"
-          aria-label={uiText('auto.213989312d7f')}
-          title={uiText('auto.213989312d7f')}
-          onClick={() => setView({ kind: 'add' })}
-        >
-          <Plus className="" />
-        </Button>
-      </div>
-
-      {snap.accounts.length === 0 ? (
-        <p className="email-settings-empty">{uiText('auto.ea9ca69a7a4b')}</p>
-      ) : (
-        <div className="settings-list">
-          {snap.accounts.map((account) => (
-            <AccountRow key={account.id} account={account} onOpen={() => setView({ kind: 'account', id: account.id })} />
-          ))}
+    <>
+      <section className="settings-section email-settings settings-listpage">
+        <div className="settings-listpage-header">
+          <h4 className="settings-label">{uiText('auto.65b0d1700502')}</h4>
+          <Button
+            className="settings-listpage-add"
+            size="small"
+            aria-label={uiText('auto.213989312d7f')}
+            title={uiText('auto.213989312d7f')}
+            onClick={() => setView({ kind: 'add' })}
+          >
+            <Plus className="" />
+          </Button>
         </div>
-      )}
-      <OrganizationSettings />
-    </section>
+
+        {snap.accounts.length === 0 ? (
+          <p className="email-settings-empty">{uiText('auto.ea9ca69a7a4b')}</p>
+        ) : (
+          <div className="settings-list">
+            {snap.accounts.map((account) => (
+              <AccountRow key={account.id} account={account} onOpen={() => setView({ kind: 'account', id: account.id })} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <ContactsFolderSettings />
+      <SyncSettings />
+    </>
+  )
+}
+
+const ContactsFolderSettings: FC = () => {
+  const { store } = useEmail()
+  const vcf = React.useSyncExternalStore(store.vcfContacts.subscribe, store.vcfContacts.getSnapshot)
+  const [contactsRoot, setContactsRoot] = React.useState(() => readContactsRoot(api))
+  React.useEffect(() => api.settings.subscribe(() => { setContactsRoot(readContactsRoot(api)) }), [])
+  const { Section, Row, RealmFolderField } = api.ui.settings
+
+  return (
+    <Section title={uiText('email.contacts')}>
+      <Row title={uiText('email.settings.contactsRoot')} description={uiText('email.settings.contactsRootDescription')}>
+        <RealmFolderField
+          value={contactsRoot}
+          onChange={setContactsRoot}
+          onCommit={(value) => { void api.settings.set('contactsRoot', value) }}
+          ariaLabel={uiText('email.settings.contactsRoot')}
+        />
+      </Row>
+      <p className="email-settings-hint email-vcf-status" role="status">
+        {vcf.loading
+          ? uiText('auto.33ce417454bf')
+          : vcf.count > 0
+            ? uiText('email.settings.contactsLoaded', { count: vcf.count, emails: vcf.emailCount })
+            : uiText('email.settings.contactsEmpty')}
+      </p>
+    </Section>
+  )
+}
+
+const SyncSettings: FC = () => {
+  const readNum = (key: string, fallback: number, min: number, max: number): number => {
+    const value = Number(api.settings.get()[key])
+    return Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value))) : fallback
+  }
+  const [syncLimit, setSyncLimit] = React.useState<number | null>(() => readNum('syncLimit', 50, 1, 500))
+  const [cacheDays, setCacheDays] = React.useState<number | null>(() => readNum('cacheDays', 180, 1, 3650))
+  React.useEffect(() => api.settings.subscribe(() => {
+    setSyncLimit(readNum('syncLimit', 50, 1, 500))
+    setCacheDays(readNum('cacheDays', 180, 1, 3650))
+  }), [])
+  const { Section, Row, NumberField } = api.ui.settings
+
+  return (
+    <Section title={uiText('email.settings.syncSection')}>
+      <Row title={uiText('plugin.email.field.perSync')} description={uiText('auto.62e474963a01')}>
+        <NumberField
+          ariaLabel={uiText('plugin.email.field.perSync')}
+          min={1}
+          max={500}
+          step={1}
+          value={syncLimit}
+          onChange={setSyncLimit}
+          onCommit={(next) => {
+            const clamped = Math.max(1, Math.min(500, Math.round(next ?? 50)))
+            setSyncLimit(clamped)
+            void api.settings.set('syncLimit', clamped)
+          }}
+        />
+      </Row>
+      <Row title={uiText('plugin.email.field.cacheDays')} description={uiText('plugin.email.field.cacheDaysDesc')}>
+        <NumberField
+          ariaLabel={uiText('plugin.email.field.cacheDays')}
+          min={1}
+          max={3650}
+          step={1}
+          value={cacheDays}
+          onChange={setCacheDays}
+          onCommit={(next) => {
+            const clamped = Math.max(1, Math.min(3650, Math.round(next ?? 180)))
+            setCacheDays(clamped)
+            void api.settings.set('cacheDays', clamped)
+          }}
+        />
+      </Row>
+    </Section>
   )
 }
 

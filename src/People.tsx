@@ -28,14 +28,15 @@ export const Person: React.FC<{ address: EmailAddress; showAddress?: boolean }> 
   const matches = snap.contacts[address.address.trim().toLowerCase()] ?? []
   const label = contactName(address, snap.contacts)
   const content = <><span>{label}</span>{showAddress && label !== address.address && <small>{address.address}</small>}</>
-  if (!matches.length) return <span className="email-person" title={address.address}>{content}</span>
+  const linked = matches.filter((contact) => !contact.id.startsWith('vcf:'))
+  if (!linked.length || !api.interop.services.providers(CONTACTS_DIRECTORY_V1)[0]) return <span className="email-person" title={address.address}>{content}</span>
   return <button className="email-person linked" title={address.address} onClick={(event) => {
     event.stopPropagation()
     const provider = api.interop.services.providers(CONTACTS_DIRECTORY_V1)[0]
     if (!provider) return
     void api.ui.openPopover(({ close }) => <div className="email-contact-card">
       <div className="email-popover-label">{address.address}</div>
-      {matches.map((contact) => <button key={contact.id} className="email-account-option" onClick={(event) => {
+      {linked.map((contact) => <button key={contact.id} className="email-account-option" onClick={(event) => {
         close()
         void provider.invoke('open', [contact.id, { newTab: opensInNewTab(event) }])
       }} onAuxClick={(event) => {

@@ -3,6 +3,7 @@ import type { PluginDataApi } from '@valley/plugin-sdk'
 import type { CachedMessage, EmailAccount, MailStructure } from '../mailTypes'
 import type { DatasetPage, DatasetRecord, DatasetRequest, DatasetTransactionOperation, DatasetWhere } from '@valley/plugin-sdk/datasets'
 import { identifyMessage } from './identity'
+import { messageCategoryProjection } from './categories'
 import { readAutomationHeaders } from './automation'
 
 export interface EmailStoreContext {
@@ -460,7 +461,7 @@ export async function projectAssignments(scope: EmailStoreContext, ids: string[]
     const assignments = await scope.data.dataset('assignments').query({ where: { id: { in: selected } }, limit: 100 })
     const memberships = await scope.data.dataset(scope.datasets.folderMessages).aggregate({ where: { messageId: { in: selected }, spam: true }, groupBy: ['messageId'], metrics: { count: { operation: 'count' } } })
     await scope.data.transaction(selected.map(id => ({ operation: 'update', dataset: scope.datasets.messages, key: { id }, values: {
-      categoryId: assignments.rows.find(row => row.id === id)?.categoryId ?? null,
+      ...messageCategoryProjection(assignments.rows.find(row => row.id === id)),
       isSpam: memberships.some(row => row.messageId === id)
     } })))
   }

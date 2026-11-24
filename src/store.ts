@@ -3,9 +3,9 @@ import type { CachedMessage, EmailAccount, EmailMailbox } from './mailTypes'
 import type { ContactDirectoryEntry, ValleyPluginApi } from '@valley/plugin-sdk'
 import { createContactResolution } from './contactResolution'
 import { createEmailProjections } from './projections'
-import { createClassificationQueue, type ClassificationProgress } from './classificationQueue'
-import { vipAddresses } from './grouping'
+import { createClassificationQueue, type AccountClassificationScope, type ClassificationProgress } from './classificationQueue'
 import { createSmartGroupsStore, currentGroupFilter, groupFilter, starterGroups, type SmartGroupsStore } from './smartGroups'
+import { createVcfContactsStore, type VcfContactsStore } from './vcfContacts'
 import { createSyncController } from './syncController'
 import { createAccountsController } from './accountsController'
 import { createDraftController } from './draftController'
@@ -80,6 +80,7 @@ export interface EmailStore {
   loadMore(): Promise<void>
   openMessage(message: EmailMessageRef | null): void
   smartGroups: SmartGroupsStore
+  vcfContacts: VcfContactsStore
   sync(): Promise<void>
   /** Sync unless every account of the current folder view was synced within the last minute. */
   syncIfStale(): Promise<void>
@@ -90,10 +91,12 @@ export interface EmailStore {
   setFilters(filters: EmailFilters): void
   /** Opens a smart group (and its subgroups) of one account in the Recent view of this tab, like a folder. */
   selectGroup(accountId: string, groupId: string): Promise<void>
-  toggleVip(address: EmailAddress): Promise<void>
   assignCategory(id: string, categoryId: string | null): Promise<void>
+  assignCategories(id: string, categoryIds: string[]): Promise<void>
   resetCategory(id: string): Promise<void>
   classifyExisting(ids: string[]): Promise<void>
+  classifyAccount(accountId: string, scope: AccountClassificationScope): Promise<number>
+  classifyAllAccounts(scope: AccountClassificationScope): Promise<number>
   retryClassification(): void
   cancelClassification(): Promise<void>
   startCompose(mode?: ComposeDraft['mode'], message?: CachedMessage, initial?: Pick<ComposeDraft, 'to' | 'cc' | 'bcc' | 'subject' | 'text'>): Promise<void>
@@ -175,10 +178,11 @@ function createStore(api: ValleyPluginApi): EmailStore {
     api.workspace.setMainTabTitle(title, focusedTabInstance())
     noteEmailTabTitle(title)
   }
+  const vcfContacts = createVcfContactsStore(api)
   const contacts = createContactResolution(api, () => {
     const messages = [...state.messages, ...(state.selectedMessage ? [state.selectedMessage] : [])]
     return [...messages.flatMap((message) => Object.values(message.addresses).flat()), ...(state.compose ? [...state.compose.to, ...state.compose.cc, ...state.compose.bcc] : [])].map((item) => item.address)
-  }, (contacts) => set({ contacts }))
+  }, (contacts) => set({ contacts }), vcfContacts)
   const resolveContacts = contacts.refresh
   const report = (error: unknown): void => set({ error: error instanceof Error ? error.message : String(error) })
   let syncError: string | null = null
@@ -229,14 +233,14 @@ function createStore(api: ValleyPluginApi): EmailStore {
   const { startCompose, updateDraft, saveDraft, cancelCompose, closeCompose, revertCompose, send } = draftController
   let accountsLoaded!: () => void
   const smartGroups = createSmartGroupsStore(api, () => state.accounts, new Promise<void>(resolve => { accountsLoaded = resolve }), () => starterGroups(key => uiText(key)))
-  const classification = createClassificationQueue(api, smartGroups, classification => set({ classification }), async () => { messagesController.invalidateMessages(); await loadMessages() })
+  const classification = createClassificationQueue(api, smartGroups, classification => set({ classification }), async () => { messagesController.invalidateMessages(); await loadMessages() }, vcfContacts)
   const setFilters = (filters: EmailFilters): void => { messagesController.invalidateMessages(); set({ filters, messages: [], cursor: undefined }); void api.settings.set('filters', filters).catch(report); void loadMessages() }
   // Saved group filters follow the groups: a removed group or a stale subtree never leaves the list filtered on ids that match nothing.
   let groupsLoaded = false
   const reconcileFilters = (): void => { if (disposed || !groupsLoaded) return; const next = currentGroupFilter(smartGroups.get(), state.filters); if (next !== state.filters) setFilters(next) }
   void smartGroups.ready.then(() => { groupsLoaded = true; reconcileFilters() })
   const offGroups = smartGroups.subscribe(reconcileFilters)
-  const projections = createEmailProjections(api, async () => { messagesController.invalidateMessages(); await loadMessages() })
+  const projections = createEmailProjections(api, async () => { messagesController.invalidateMessages(); await loadMessages() }, vcfContacts)
   const offSync = mail.onSync((event) => {
     if (event.status === 'done') syncController.noteSynced(event.accountId, event.folder)
     if (event.status === 'done' && event.arrived?.length) void classification.enqueue(event.arrived, true).catch(report)
@@ -264,28 +268,26 @@ function createStore(api: ValleyPluginApi): EmailStore {
     dispose: () => {
       if (draining) return draining
       disposed = true; messagesController.invalidateSelection(); contacts.clearSelection(); mailboxController.dispose(); offSync(); offSettings(); offGroups(); smartGroups.dispose(); listeners.clear()
-      draining = Promise.allSettled([classification.dispose(), projections.dispose(), contacts.dispose(), syncController.dispose(), draftController.dispose(), mailSession.dispose()]).then((results) => {
+      draining = Promise.allSettled([classification.dispose(), projections.dispose(), contacts.dispose(), vcfContacts.dispose(), syncController.dispose(), draftController.dispose(), mailSession.dispose()]).then((results) => {
         const failure = results.find((result) => result.status === 'rejected')
         if (failure?.status === 'rejected') throw failure.reason
       })
       return draining
     },
-    smartGroups, refreshAccounts, selectAccount, selectAccounts, selectView, selectFolder: (folder) => selectView('folder', folder), loadMore: () => loadMessages(true),
+    smartGroups, vcfContacts, refreshAccounts, selectAccount, selectAccounts, selectView, selectFolder: (folder) => selectView('folder', folder), loadMore: () => loadMessages(true),
     // Opening mail in the tab that shows the draft releases the draft in that same turn.
     openMessage: (message) => { if (!disposed && state.composing) releaseComposeTab(); openMessage(message) }, sync, syncIfStale, act, setPlainText: (message, htmlContent, plainText) => set({ bodyOverride: { key: messageKey(message), htmlContent, plainText } }), dismissError: () => set({ error: null }),
     retry: async () => { set({ error: null }); await refreshAccounts(); await sync() },
     setQuery,
     setFilters,
     selectGroup: (accountId, groupId) => selectView('recent', state.selectedFolder, { accountId, groupId }),
-    toggleVip: async address => {
-      const values = vipAddresses(api), key = address.address.trim().toLowerCase()
-      const matched = state.contacts[key]
-      const addresses = matched?.length === 1 ? matched[0].emails.map(email => email.address.trim().toLowerCase()) : [key]
-      const remove = values.has(key)
-      for (const value of addresses) { if (remove) values.delete(value); else values.add(value) }
-      await api.settings.set('vipAddresses', [...values])
+    assignCategory: (id, categoryId) => classification.assign(id, categoryId), assignCategories: (id, categoryIds) => classification.assignCategories(id, categoryIds), resetCategory: classification.reset, classifyExisting: ids => classification.enqueue(ids), classifyAccount: (accountId, scope) => classification.enqueueAccount(accountId, scope),
+    classifyAllAccounts: async (scope) => {
+      let total = 0
+      for (const account of state.accounts) total += await classification.enqueueAccount(account.id, scope)
+      return total
     },
-    assignCategory: (id, categoryId) => classification.assign(id, categoryId), resetCategory: classification.reset, classifyExisting: ids => classification.enqueue(ids), retryClassification: classification.retry, cancelClassification: classification.cancel,
+    retryClassification: classification.retry, cancelClassification: classification.cancel,
     startCompose, updateDraft, saveDraft, cancelCompose, closeCompose, revertCompose, send, flushDraft: draftController.flush,
     removeAccount: async (accountId) => {
       if (disposed) return

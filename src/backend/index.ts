@@ -9,6 +9,7 @@ import { encodeBytes } from './encoding'
 import { createMailWorkQueue } from './workQueue'
 import { automationHeaders, MailRefusal, prepareAutomaticMail, type MailAutomationServices } from './automation'
 import { createWorkflowAdapter } from './workflow'
+import { readEmailIcons } from './icons'
 
 interface MailRpc {
   handleOperation?: PluginBackendApi['rpc']['handleOperation']
@@ -16,7 +17,7 @@ interface MailRpc {
   emit(name: string, payload: unknown): void
 }
 
-export interface MailBackendApi extends MailTransportApi { services?: MailAutomationServices; notifications?: PluginBackendApi['notifications']; lifecycle?: PluginBackendApi['lifecycle']; settings?: PluginBackendApi['settings']; data: PluginDataApi; rpc: MailRpc; i18n?: { t(key: string, params?: Record<string, string | number>): string } }
+export interface MailBackendApi extends MailTransportApi { storage?: PluginBackendApi['storage']; services?: MailAutomationServices; notifications?: PluginBackendApi['notifications']; lifecycle?: PluginBackendApi['lifecycle']; settings?: PluginBackendApi['settings']; data: PluginDataApi; rpc: MailRpc; i18n?: { t(key: string, params?: Record<string, string | number>): string } }
 interface MailBackendContext extends EmailStoreContext, MailTransportApi { /** The last opened body too large for the cache, as decoded pieces. */ opened?: Map<string, { text?: string[]; html?: string[] }>; /** Where the bounded UID SEARCH of older cached UIDs continues, per folder; a restart starts again from the oldest. */ reconcileCursors?: Map<string, { uidValidity: number; after: number }>; services?: MailAutomationServices & Partial<Pick<PluginBackendApi['services'], 'emit'>>; notifications?: PluginBackendApi['notifications']; settings?: PluginBackendApi['settings']; rpc: MailRpc; t: ReturnType<typeof createTranslator> }
 
 class RemoteMailCacheError extends Error {
@@ -532,6 +533,7 @@ export function register(api: MailBackendApi): () => Promise<void> {
     const rpc = name === 'queryMessages' && operation ? undefined : api.rpc.handle(name, handler)
     return () => { operation?.(); existingOperation?.(); rpc?.() }
   })
+  off.push(api.rpc.handle('emailIcons', () => readEmailIcons(api)))
   off.push(api.rpc.handle('notifications.action', async payload => {
     const event = z.object({ action: z.enum(['read', 'reply']), targetItemId: z.string().max(256), input: z.string().max(16384).optional(), occurrenceId: z.string().regex(/^[a-f0-9]{64}$/) }).passthrough().parse(payload)
     const ref = z.object({ accountId: z.string(), folder: z.string(), uid: z.number().int().positive(), uidValidity: z.number().int().positive().optional() }).strict().parse(JSON.parse(event.targetItemId))

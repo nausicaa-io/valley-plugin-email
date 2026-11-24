@@ -498,4 +498,27 @@ describe('cached mail retention', () => {
     expect(JSON.stringify(config)).not.toContain('attachment-files')
     expect(config.settingsSchema.fields.find(field => field.key === 'cacheDays')).toMatchObject({ default: 180, schema: { minimum: 1, maximum: 3650 } })
   })
+
+  it('filters messages by any assigned group (primary or secondary) and exposes categoryIds', async () => {
+    await mergeFolder(scope, 'station', 'INBOX', [
+      { ...message, uid: 21, messageId: '<multi-1@example.test>', subject: 'Family trip ticket' },
+      { ...message, uid: 22, messageId: '<multi-2@example.test>', subject: 'Plain receipt' }
+    ])
+    const rows = (await scope.data.dataset('messages').query({ where: { accountId: 'station' }, limit: 10 })).rows
+    const firstId = String(rows.find((row) => row.subject === 'Family trip ticket')!.id)
+    const secondId = String(rows.find((row) => row.subject === 'Plain receipt')!.id)
+    await scope.data.dataset('messages').update({ id: firstId }, { categoryId: 'family', categoryIds: ['family', 'travel', 'receipts-transport'], categoryKeys: '|family|travel|receipts-transport|' })
+    await scope.data.dataset('messages').update({ id: secondId }, { categoryId: 'receipts', categoryIds: ['receipts'], categoryKeys: '|receipts|' })
+
+    const travel = await queryMessages(scope, { accountId: 'station', view: 'recent', filters: { categoryIds: ['travel'] } })
+    expect(travel.messages.map((item) => item.subject)).toEqual(['Family trip ticket'])
+    expect(travel.messages[0]).toMatchObject({ categoryId: 'family', categoryIds: ['family', 'travel', 'receipts-transport'] })
+
+    const receiptsSubtree = await queryMessages(scope, { accountId: 'station', view: 'recent', filters: { categoryIds: ['receipts', 'receipts-transport'] } })
+    expect(receiptsSubtree.messages.map((item) => item.subject).sort()).toEqual(['Family trip ticket', 'Plain receipt'])
+
+    // Exact pipe token prevents substring collisions (e.g. 'receipts' must not match 'receipts-transport').
+    const exactReceipts = await queryMessages(scope, { accountId: 'station', view: 'recent', filters: { categoryId: 'receipts' } })
+    expect(exactReceipts.messages.map((item) => item.subject)).toEqual(['Plain receipt'])
+  })
 })

@@ -18,6 +18,20 @@
     }
   },
   "settingsView": "email.settings",
+  "settingsSections": [
+    {
+      "id": "grouping",
+      "label": "Grouping",
+      "labelKey": "email.settings.section.grouping",
+      "icon": "group",
+      "description": "Sort mail into groups automatically with AI and sender matches, with custom icons and colours.",
+      "descriptionKey": "email.settings.section.groupingDesc",
+      "storage": [
+        ".valley/plugins/data/email/",
+        ".valley/assets/icons/email-icon/"
+      ]
+    }
+  ],
   "searchSources": [
     {
       "id": "email",
@@ -93,7 +107,7 @@
     {
       "id": "messages",
       "store": "cache",
-      "version": 6,
+      "version": 7,
       "title": "Messages",
       "primaryKey": [
         "id"
@@ -155,6 +169,14 @@
           "nullable": true
         },
         "categoryId": {
+          "type": "text",
+          "nullable": true
+        },
+        "categoryIds": {
+          "type": "json",
+          "nullable": true
+        },
+        "categoryKeys": {
           "type": "text",
           "nullable": true
         },
@@ -497,7 +519,7 @@
     {
       "id": "assignments",
       "store": "durable",
-      "version": 3,
+      "version": 4,
       "title": "Email category assignments",
       "visibility": "private",
       "sensitivity": "sensitive",
@@ -510,6 +532,10 @@
         },
         "categoryId": {
           "type": "text",
+          "nullable": true
+        },
+        "categoryIds": {
+          "type": "json",
           "nullable": true
         },
         "manual": {
@@ -1069,6 +1095,16 @@
   },
   "settingsSchema": {
     "fields": [
+      {
+        "key": "contactsRoot",
+        "label": "Contacts folder",
+        "labelKey": "email.settings.contactsRoot",
+        "type": "text",
+        "default": "",
+        "description": "Realm-relative folder scanned for .vcf contact cards so Email and AI sorting know senders' names, organizations and groups.",
+        "descriptionKey": "email.settings.contactsRootDescription",
+        "validate": "realm-folder"
+      },
       {
         "key": "syncLimit",
         "label": "Messages per sync",
@@ -1631,7 +1667,7 @@
         "metadata": {
           "command": {
             "id": "removeAccount",
-            "description": "Remove a local mail account and its cached messages. The stored password is deleted from protected host storage (it is never readable back) and cannot be restored; re-adding the mailbox through addSmtpAccount creates a new account ID. When the account had no stored password, the result's restore field holds the removed account record and its cached messages and memberships (null when that exceeds 256 KiB), which restoreAccount re-inserts exactly; otherwise restore is null. An id without a locally stored account (including Settings \u2192 Accounts mailboxes) is refused with ACCOUNT_NOT_FOUND before anything changes.",
+            "description": "Remove a local mail account and its cached messages. The stored password is deleted from protected host storage (it is never readable back) and cannot be restored; re-adding the mailbox through addSmtpAccount creates a new account ID. When the account had no stored password, the result's restore field holds the removed account record and its cached messages and memberships (null when that exceeds 256 KiB), which restoreAccount re-inserts exactly; otherwise restore is null. An id without a locally stored account (including Settings → Accounts mailboxes) is refused with ACCOUNT_NOT_FOUND before anything changes.",
             "effect": "execute",
             "recovery": "non-replayable",
             "inputSchema": {
@@ -2762,6 +2798,12 @@
                         "categoryId": {
                           "type": "string"
                         },
+                        "categoryIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
                         "isVip": {
                           "type": "boolean"
                         },
@@ -3229,6 +3271,12 @@
                       },
                       "categoryId": {
                         "type": "string"
+                      },
+                      "categoryIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
                       },
                       "isVip": {
                         "type": "boolean"
@@ -5073,6 +5121,12 @@
                                 "categoryId": {
                                   "type": "string"
                                 },
+                                "categoryIds": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
                                 "isVip": {
                                   "type": "boolean"
                                 },
@@ -5452,6 +5506,12 @@
                             "categoryId": {
                               "type": "string"
                             },
+                            "categoryIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
                             "isVip": {
                               "type": "boolean"
                             },
@@ -5805,6 +5865,12 @@
                               },
                               "categoryId": {
                                 "type": "string"
+                              },
+                              "categoryIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
                               },
                               "isVip": {
                                 "type": "boolean"
@@ -6257,6 +6323,12 @@
                           },
                           "categoryId": {
                             "type": "string"
+                          },
+                          "categoryIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
                           },
                           "isVip": {
                             "type": "boolean"
@@ -7363,6 +7435,12 @@
       "discovery",
       "classification"
     ],
+    "storage": {
+      "realm": true,
+      "metadata": [
+        "assets/icons/email-icon"
+      ]
+    },
     "largeData": true
   },
   "datasetMigrations": [
@@ -7822,6 +7900,49 @@
           "column": "bestConfidence",
           "definition": {
             "type": "real",
+            "nullable": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "messages-multi-group-v7",
+      "store": "cache",
+      "fromVersion": 6,
+      "toVersion": 7,
+      "steps": [
+        {
+          "operation": "add-column",
+          "dataset": "messages",
+          "column": "categoryIds",
+          "definition": {
+            "type": "json",
+            "nullable": true
+          }
+        },
+        {
+          "operation": "add-column",
+          "dataset": "messages",
+          "column": "categoryKeys",
+          "definition": {
+            "type": "text",
+            "nullable": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "assignments-multi-group-v4",
+      "store": "durable",
+      "fromVersion": 3,
+      "toVersion": 4,
+      "steps": [
+        {
+          "operation": "add-column",
+          "dataset": "assignments",
+          "column": "categoryIds",
+          "definition": {
+            "type": "json",
             "nullable": true
           }
         }

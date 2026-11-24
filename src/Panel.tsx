@@ -1,12 +1,14 @@
 import { EmailFilterControls, ClassificationStatus, useSmartGroups } from './Organization'
-import { descendantIds, findGroupPath, flattenGroups } from './smartGroups'
+import { countGroupedMessages, findGroupPath, flattenGroups, groupDisplayColor, groupDisplayIcon, normalizeCategoryIds } from './smartGroups'
+import { paletteCssAlpha, paletteCssValue } from '@valley/plugin-sdk/palette'
 import { React, api, opensInNewTab } from './runtime'
 import type { EmailAccount, EmailMailbox } from './mailTypes'
 import type { EmailMailboxView } from './mailTypes'
 import { useEmail } from './hooks'
 import { ErrorNotice } from './Notice'
-import { Archive, ChevronDown, EyeOff, Flag, Google, Inbox, Mail, Microsoft, Plus, Reload, Search, Send, Trash, Paperclip, Filter, Tag } from './icons'
-import type { SmartGroupsConfig } from './smartGroups'
+import { Archive, ChevronDown, EyeOff, Flag, Google, Inbox, Mail, Microsoft, Plus, Reload, Search, Send, Trash, Paperclip, Filter } from './icons'
+import { EmailGroupIcon } from './emailIcons'
+import type { SmartGroup, SmartGroupsConfig } from './smartGroups'
 import type { EmailMessageSummary } from './mailTypes'
 import { SwipeRow } from './SwipeRow'
 import { ContactAvatar, contactName } from './People'
@@ -77,12 +79,27 @@ const DraftEntry: React.FC<{ draft: ComposeDraft }> = ({ draft }) => {
 const CARD_PITCH = 97
 const TAGGED_CARD_PITCH = 123
 
-/** The tags a message card shows under its preview: its smart group, then VIP, flagged and attachments. */
-function messageTags(message: EmailMessageSummary, config: SmartGroupsConfig): { key: string; label: string; icon?: React.ReactElement; primary?: boolean }[] {
-  const group = config.enabled && message.categoryId ? findGroupPath(config.accounts[message.accountId]?.groups ?? [], message.categoryId) : undefined
+/** The tags a message card shows under its preview: its smart groups (with icons and colours), flagged and attachments. */
+function messageTags(message: EmailMessageSummary, config: SmartGroupsConfig): { key: string; label: string; icon?: React.ReactElement; primary?: boolean; color?: string }[] {
+  const accountGroups = config.enabled ? config.accounts[message.accountId]?.groups ?? [] : []
+  const ids = config.enabled ? normalizeCategoryIds(message.categoryIds, message.categoryId) : []
+  const matched = ids
+    .map((id) => ({ id, path: findGroupPath(accountGroups, id) }))
+    .filter((entry): entry is { id: string; path: SmartGroup[] } => Boolean(entry.path?.length))
+  const visible = matched.slice(0, 2)
+  const overflow = matched.length - visible.length
   return [
-    ...(group ? [{ key: 'group', label: group.map((item) => item.name || '…').join(' / '), primary: true }] : []),
-    ...(message.isVip ? [{ key: 'vip', label: uiText('email.filter.vip') }] : []),
+    ...visible.map(({ id, path }) => {
+      const leaf = path[path.length - 1]
+      return {
+        key: `group:${id}`,
+        label: path.map((item) => item.name || '…').join(' / '),
+        icon: <EmailGroupIcon icon={groupDisplayIcon(leaf)} />,
+        primary: true,
+        color: groupDisplayColor(leaf)
+      }
+    }),
+    ...(overflow > 0 ? [{ key: 'group-more', label: `+${overflow}` }] : []),
     ...(message.flags.includes('\\Flagged') ? [{ key: 'flagged', label: uiText('auto.f8db8a172be6'), icon: <Flag filled /> }] : []),
     ...(message.hasAttachments ? [{ key: 'attachments', label: uiText('email.attachments'), icon: <Paperclip /> }] : [])
   ]
@@ -134,13 +151,18 @@ const GroupOptions: React.FC<{ close(): void }> = ({ close }) => {
     if (!accountKey) return
     let active = true
     const messages = api.data.dataset('messages')
-    const load = (): void => { void Promise.all(accountKey.split('\u0000').map(async (accountId) => [accountId, Object.fromEntries((await messages.aggregate({
-      where: { accountId, categoryId: { isNull: false }, exists: { dataset: 'folder_messages', on: { id: 'messageId', accountId: 'accountId' }, where: { excluded: false } } }, groupBy: ['categoryId'], metrics: { count: { operation: 'count' } }
-    })).map((row) => [String(row.categoryId), Number(row.count)]))] as const)).then((entries) => { if (active) setCounts(Object.fromEntries(entries)) }, () => {}) }
+    const load = (): void => {
+      void Promise.all(
+        accountKey.split('\u0000').map(async (accountId) => {
+          const result = await countGroupedMessages(api, accountId, config.accounts[accountId]?.groups ?? [])
+          return [accountId, result.byGroup] as const
+        })
+      ).then((entries) => { if (active) setCounts(Object.fromEntries(entries)) }, () => {})
+    }
     load()
     const off = messages.subscribe(load)
     return () => { active = false; off() }
-  }, [accountKey])
+  }, [accountKey, config.accounts])
   if (!accounts.length) return null
   return <>
     <div className="email-popover-separator" /><div className="email-popover-label">{uiText('email.smartGroups.groups')}</div>
@@ -148,10 +170,10 @@ const GroupOptions: React.FC<{ close(): void }> = ({ close }) => {
       {accounts.length > 1 && <div className="email-popover-sublabel">{account.displayName || account.address}</div>}
       {flattenGroups(config.accounts[account.id].groups).map((entry) => {
         const active = snap.group?.accountId === account.id && snap.group.groupId === entry.group.id
-        const count = descendantIds(entry.group).reduce((sum, id) => sum + (counts[account.id]?.[id] ?? 0), 0)
+        const count = counts[account.id]?.[entry.group.id] ?? 0
         return <button key={entry.group.id} role="menuitemradio" aria-checked={active} className={`email-account-option email-group-option${active ? ' selected' : ''}`} style={{ paddingInlineStart: 8 + entry.depth * 16 }}
           onClick={() => { void store.selectGroup(account.id, entry.group.id); close() }}>
-          <span className="email-account-check">{active ? '✓' : ''}</span><Tag /><span className="email-row-label">{entry.group.name || '…'}</span><small>{count}</small>
+          <span className="email-account-check">{active ? '✓' : ''}</span><EmailGroupIcon icon={groupDisplayIcon(entry.group)} color={groupDisplayColor(entry.group)} /><span className="email-row-label">{entry.group.name || '…'}</span><small>{count}</small>
         </button>
       })}
     </div>)}
@@ -214,7 +236,7 @@ export const MailboxControls: React.FC<{ compact?: boolean }> = ({ compact = fal
       }}>{account ? <AccountIcon account={account} /> : <Mail />}<span>{accountLabel}</span><ChevronDown /></button>
     <button className="email-selector" disabled={!account} title={label} aria-label={uiText('email.mailboxes')} aria-expanded={expanded === 'folders'} aria-controls={panelId} onClick={(event) => {
       toggle('folders', event.currentTarget)
-    }}>{group ? <Tag /> : snap.view === 'folder' && mailbox ? <FolderIcon mailbox={mailbox} /> : snap.view === 'unread' ? <EyeOff /> : snap.view === 'flagged' ? <Flag /> : <Mail />}<span>{label}</span><ChevronDown /></button>
+    }}>{group ? <EmailGroupIcon icon={groupDisplayIcon(group[group.length - 1])} color={groupDisplayColor(group[group.length - 1])} /> : snap.view === 'folder' && mailbox ? <FolderIcon mailbox={mailbox} /> : snap.view === 'unread' ? <EyeOff /> : snap.view === 'flagged' ? <Flag /> : <Mail />}<span>{label}</span><ChevronDown /></button>
     <button className="email-icon-btn" title={uiText('email.filters')} aria-label={uiText('email.filters')} aria-expanded={expanded === 'filters'} aria-controls={panelId} onClick={event => toggle('filters', event.currentTarget)}><Filter /></button>
     <button className="email-icon-btn email-reload" title={uiText(snap.syncing ? 'email.reloading' : 'email.reload')} aria-label={uiText('email.reload')} aria-busy={snap.syncing} disabled={!account || snap.syncing} onClick={() => { void store.sync() }}><Reload /></button>
     <button className="email-icon-btn email-compose-action" title={uiText('auto.47da6f0838f0')} aria-label={uiText('auto.47da6f0838f0')} disabled={!account} onClick={() => {
@@ -320,7 +342,7 @@ export const Panel: React.FC = () => {
                     <time title={formatEmailTimestamp(message.date, dateFormat, timeFormat, api.ui.language(), true)}>{formatEmailListDate(message.date, dateFormat, api.ui.language())}</time></div>
                   <div className="email-message-subject">{message.subject || uiText('email.noSubject')}</div>
                   <div className="email-message-snippet">{message.snippet}</div>
-                  {messageTagList.length > 0 && <div className="email-message-tags">{messageTagList.map((tag) => <span key={tag.key} className={`email-tag${tag.primary ? ' primary' : ''}`} title={tag.label}>
+                  {messageTagList.length > 0 && <div className="email-message-tags">{messageTagList.map((tag) => <span key={tag.key} className={`email-tag${tag.primary ? ' primary' : ''}${tag.color ? ' colored' : ''}`} style={tag.color ? { background: paletteCssAlpha(tag.color, 16), color: paletteCssValue(tag.color), borderColor: paletteCssAlpha(tag.color, 32) } : undefined} title={tag.label}>
                     {tag.icon}<span>{tag.label}</span>
                   </span>)}</div>}
                 </div>

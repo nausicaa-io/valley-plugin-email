@@ -4,6 +4,7 @@ import { addressParser } from 'postal-mime'
 import type { EmailAddress, EmailMessageDetail, EmailMessageQuery, EmailMessageRef, EmailMessageSummary } from '../mailTypes'
 import type { DatasetPage, DatasetRecord, DatasetWhere } from '@valley/plugin-sdk/datasets'
 import { datasetRequest as request, ensureMembershipFlags, folderProjection, projectAssignments, queryAll, readStructure, removeFromFolder, type EmailStoreContext } from './cache'
+import { normalizeCategoryIds } from './categories'
 import { readAutomationHeaders } from './automation'
 
 export function parseEmailAddresses(value: string, strict = false): EmailAddress[] {
@@ -20,12 +21,13 @@ function flags(row: DatasetRecord): string[] {
 function summarize(row: DatasetRecord, memberships: DatasetRecord[]): EmailMessageSummary {
   const primary = memberships[0]
   const text = (key: string): string => typeof row[key] === 'string' ? row[key] as string : ''
+  const categoryIds = normalizeCategoryIds(row.categoryIds, row.categoryId)
   return {
     ...(readAutomationHeaders(row.automationHeaders) ? { automationHeaders: readAutomationHeaders(row.automationHeaders) } : {}),
     id: text('id'), accountId: text('accountId'), folder: String(primary.folder), uid: Number(primary.uid), ...(typeof primary.uidValidity === 'number' ? { uidValidity: primary.uidValidity } : {}),
     memberships: memberships.map((item) => ({ accountId: text('accountId'), folder: String(item.folder), uid: Number(item.uid), ...(typeof item.uidValidity === 'number' ? { uidValidity: item.uidValidity } : {}) })),
     messageId: text('messageId'), from: text('from'), to: text('to'), cc: text('cc'), replyTo: text('replyTo'),
-    ...(typeof row.categoryId === 'string' ? { categoryId: row.categoryId } : {}), isVip: row.isVip === true, isSpam: row.isSpam === true, hasContact: row.hasContact === true,
+    ...(categoryIds.length ? { categoryId: categoryIds[0], categoryIds } : {}), isVip: row.isVip === true, isSpam: row.isSpam === true, hasContact: row.hasContact === true,
     ...(typeof row.contentRevision === 'string' ? { contentRevision: row.contentRevision } : {}),
     subject: text('subject'), date: typeof row.sortDate === 'string' ? row.sortDate : text('date'), snippet: text('snippet'), hasAttachments: row.hasAttachments === true,
     flags: flags(primary),
@@ -68,8 +70,20 @@ export async function queryMessages(scope: EmailStoreContext, input: EmailMessag
   if (filters.contact && filters.contact !== 'all') conditions.push({ hasContact: filters.contact === 'known' })
   if (filters.vip && filters.vip !== 'all') conditions.push({ isVip: filters.vip === 'vip' })
   if (filters.spam === 'spam' || filters.spam === 'not-spam') conditions.push({ isSpam: filters.spam === 'spam' })
-  if (filters.categoryIds?.length) conditions.push({ categoryId: { in: filters.categoryIds } })
-  else if (filters.categoryId) conditions.push({ categoryId: filters.categoryId === 'uncategorized' ? { isNull: true } : filters.categoryId })
+  if (filters.categoryIds?.length) {
+    conditions.push({
+      or: [
+        { categoryId: { in: filters.categoryIds } },
+        ...filters.categoryIds.slice(0, 100).map((id) => ({ categoryKeys: { contains: `|${id}|` } }))
+      ]
+    })
+  } else if (filters.categoryId) {
+    conditions.push(
+      filters.categoryId === 'uncategorized'
+        ? { categoryId: { isNull: true } }
+        : { or: [{ categoryId: filters.categoryId }, { categoryKeys: { contains: `|${filters.categoryId}|` } }] }
+    )
+  }
   if (filters.categoryAccountId) conditions.push({ accountId: filters.categoryAccountId })
   if (input.query?.trim()) conditions.push({ or: ['from', 'to', 'cc', 'subject', 'snippet', 'text', 'html'].map(field => ({ [field]: { contains: input.query!.trim() } })) })
   const stamp = await scope.data.snapshot([
@@ -86,7 +100,7 @@ export async function queryMessages(scope: EmailStoreContext, input: EmailMessag
   }
   const where = { and: conditions }
   const page = await scope.data.dataset(scope.datasets.messages).query({
-    select: ['id', 'accountId', 'messageId', 'from', 'to', 'cc', 'replyTo', 'subject', 'date', 'sortDate', 'snippet', 'hasAttachments', 'categoryId', 'isVip', 'isSpam', 'hasContact', 'contentRevision'],
+    select: ['id', 'accountId', 'messageId', 'from', 'to', 'cc', 'replyTo', 'subject', 'date', 'sortDate', 'snippet', 'hasAttachments', 'categoryId', 'categoryIds', 'isVip', 'isSpam', 'hasContact', 'contentRevision'],
     where, orderBy: [{ field: 'sortDate', direction: 'desc' }, { field: 'id', direction: 'desc' }], limit: input.limit ?? 100, cursor: after
   })
   const members: DatasetRecord[] = []

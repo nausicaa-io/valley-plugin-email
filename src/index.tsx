@@ -14,6 +14,7 @@ import { registerEmailSurfaces } from './surfaces'
 import { createEmailTabs, revealEmailTab } from './tabs'
 import { mailApi } from './mailApi'
 import { uiText } from './localization'
+import { initializeEmailIcons } from './emailIcons'
 
 const MAILTO_TAB_WAIT_MS = 3_000
 
@@ -153,6 +154,7 @@ export function register(api: ValleyPluginApi): () => Promise<void> {
     }
   })
   const offFence = registerEmailFence()
+  const offIcons = initializeEmailIcons(api)
   const offAgentTools = api.interop.services.provide(AGENT_TOOL_PROVIDER_V1, emailAgentTools(api))
 
   return () => {
@@ -164,6 +166,7 @@ export function register(api: ValleyPluginApi): () => Promise<void> {
     offOpen()
     offSync()
     offFence()
+    offIcons()
     offAgentTools()
     offCommands()
     offSurfaces()

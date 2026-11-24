@@ -61,6 +61,36 @@ describe('smart group decisions', () => {
     const paused: SmartGroupClassifier = async () => ({ status: 'paused', reason: 'rate-limited', retryAt: 42 })
     expect(await decideSmartGroup(tree(), nobody, paused)).toEqual({ status: 'paused', reason: 'rate-limited', retryAt: 42 })
   })
+
+  it('supports multiple groups per message with rules + AI, strong runner-ups, and 50/50 splits up to 3 groups', async () => {
+    // Rules + AI together: sender matches Family (refining to Dinner) AND AI also assigns Receipts / Billing.
+    const rulePlusAi = fakeProvider({ receipts: 0.85, billing: 0.8, dinner: 0.9 })
+    expect(await decideSmartGroup(tree(), { sender: 'aunt@kin.example', contactIds: new Set() }, rulePlusAi.classify, { multiGroup: true })).toEqual({
+      status: 'decided', categoryId: 'dinner', categoryIds: ['dinner', 'billing'], confidence: 0.9, source: 'ai'
+    })
+
+    // Strong runner-up with low pNone.
+    const multiTree = [group('travel', 60), group('receipts', 60), group('work', 60), group('orders', 60)]
+    expect(await decideSmartGroup(multiTree, nobody, fakeProvider({ travel: 0.62, receipts: 0.34 }).classify, { multiGroup: true })).toEqual({
+      status: 'decided', categoryId: 'travel', categoryIds: ['travel', 'receipts'], confidence: 0.62, source: 'ai'
+    })
+
+    // Genuine 50/50 split where neither alone reaches 60% but pNone is low (8%).
+    expect(await decideSmartGroup(multiTree, nobody, fakeProvider({ travel: 0.48, receipts: 0.44 }).classify, { multiGroup: true })).toEqual({
+      status: 'decided', categoryId: 'travel', categoryIds: ['travel', 'receipts'], confidence: 0.48, source: 'ai'
+    })
+
+    // Weak/ambiguous split with high pNone (35%) stays ungrouped and records closest group.
+    expect(await decideSmartGroup(multiTree, nobody, fakeProvider({ travel: 0.45, receipts: 0.2 }).classify, { multiGroup: true })).toEqual({
+      status: 'decided', categoryId: null, categoryIds: [], confidence: null, source: null, best: { categoryId: 'travel', confidence: 0.45 }
+    })
+
+    // Capped at 3 groups max even when 4 rules match.
+    const fourRules = ['a', 'b', 'c', 'd'].map((id) => group(id, 60, { rules: [{ kind: 'address', value: 'multi@example.test' }] }))
+    expect(await decideSmartGroup(fourRules, { sender: 'multi@example.test', contactIds: new Set() }, undefined, { multiGroup: true })).toEqual({
+      status: 'decided', categoryId: 'a', categoryIds: ['a', 'b', 'c'], confidence: 1, source: 'rule'
+    })
+  })
 })
 
 describe('smart group configuration', () => {
@@ -138,7 +168,7 @@ describe('provider-neutral classification queue', () => {
     const answers = { receipts: 0.9, billing: 0.8 }
     const outcomes: unknown[] = []
     for (const provider of [{ provider: 'jev', connectionId: 'jev-main', model: 'jev-1.13.0' }, { provider: 'unit-test-classifier', connectionId: 'test-local', model: 'fixture' }]) {
-      const { mock, queue, ids, settled, assignment } = await mailbox({ enabled: true, provider, accounts: { forest: forestGroups } })
+      const { mock, queue, ids, settled, assignment } = await mailbox({ enabled: true, multiGroup: false, provider, accounts: { forest: forestGroups } })
       const requests: AiClassificationRequest[] = []
       const fake = fakeProvider(answers)
       mock.api.ai.classify = vi.fn(async (request: AiClassificationRequest): Promise<AiClassificationResult> => {
@@ -157,6 +187,18 @@ describe('provider-neutral classification queue', () => {
     }
     expect(outcomes[0]).toEqual([{ categoryId: 'billing', confidence: 0.8, source: 'ai' }, { categoryId: 'family', confidence: 1, source: 'rule' }, { categoryId: null, confidence: null, source: null }])
     expect(outcomes[1]).toEqual(outcomes[0])
+  })
+
+  it('assigns multiple groups in the queue by combining sender rules and Jev AI on remaining groups', async () => {
+    const provider = { provider: 'jev', connectionId: 'jev-main', model: 'jev-1.13.0' }
+    const { mock, queue, ids, settled, assignment } = await mailbox({ enabled: true, multiGroup: true, provider, accounts: { forest: forestGroups } })
+    const fake = fakeProvider({ receipts: 0.9, billing: 0.8 })
+    mock.api.ai.classify = vi.fn(async (request: AiClassificationRequest) => fake.classify(request.categories))
+    await queue.enqueue(ids.filter(row => row.from === 'aunt@kin.example').map(row => row.id))
+    await settled()
+    expect(await assignment('forest', 'aunt@kin.example')).toMatchObject({ categoryId: 'family', categoryIds: ['family', 'billing'], source: 'rule', confidence: 1 })
+    const msgId = ids.find(row => row.accountId === 'forest' && row.from === 'aunt@kin.example')!.id
+    expect(await mock.api.data.dataset('messages').get({ id: msgId })).toMatchObject({ categoryId: 'family', categoryIds: ['family', 'billing'], categoryKeys: '|family|billing|' })
   })
 
   it('groups by rules alone when no provider is chosen or set as default', async () => {

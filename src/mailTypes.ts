@@ -160,6 +160,7 @@ export interface EmailGroupRef { accountId: string; groupId: string }
 export interface EmailMessageSummary extends Omit<CachedMessage, 'text' | 'html' | 'structure'>, EmailMessageRef {
   id: string
   categoryId?: string
+  categoryIds?: string[]
   isVip?: boolean
   isSpam?: boolean
   hasContact?: boolean

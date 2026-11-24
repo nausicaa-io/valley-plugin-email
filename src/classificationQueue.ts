@@ -1,12 +1,100 @@
-import { CONTACTS_DIRECTORY_V1, type ValleyPluginApi } from '@valley/plugin-sdk'
-import type { DatasetPage, DatasetRecord } from '@valley/plugin-sdk/datasets'
+import { CONTACTS_DIRECTORY_V1, type ContactDirectoryEntry, type ValleyPluginApi } from '@valley/plugin-sdk'
+import type { DatasetPage, DatasetRecord, DatasetWhere } from '@valley/plugin-sdk/datasets'
 import { digest } from './backend/identity'
-import { accountRevision, decideSmartGroup, descendantIds, hasRules, resolveClassifierModel, senderAddress, usesContacts, type SmartGroupsConfig, type SmartGroupsStore } from './smartGroups'
+import { MAX_GROUPS_PER_MESSAGE, messageCategoryProjection, normalizeCategoryIds } from './backend/categories'
+import { accountRevision, decideSmartGroup, descendantIds, hasRules, resolveClassifierModel, senderAddress, type SmartGroupsConfig, type SmartGroupsStore } from './smartGroups'
+import { formatVcfContactForAi, type VcfContactsStore } from './vcfContacts'
 
 export interface ClassificationProgress { pending: number; completed: number; failed: number; paused?: 'unavailable' | 'rate-limited'; error?: string }
+export type AccountClassificationScope = 'inbox-ungrouped' | 'all-ungrouped' | 'reclassify'
 const configurationKey = '_configuration'
 
-export function createClassificationQueue(api: ValleyPluginApi, smartGroups: SmartGroupsStore, publish: (state: ClassificationProgress) => void, refresh: () => Promise<void>) {
+const AUTOMATED_LOCAL_PART = /^(no[-_.]?reply|do[-_.]?not[-_.]?reply|mailer[-_.]?daemon|bounce|notifications?|alerts?|updates?|news|newsletter|digest|marketing|promo|promotions?|offers?|deals?|sales|campaigns?|info|hello|team|support|billing|invoices?|receipts?|orders?|shipping|dispatch|security|verify|account|admin|automated|bot)([+.0-9_-]|$)/i
+const UNSUBSCRIBE_HINT = /\b(unsubscribe|manage\s+(your\s+)?(email\s+)?(preferences|subscriptions)|opt[\s-]?out|view\s+(this\s+email\s+)?in\s+(your\s+)?browser|abbestellen|abmelden|se\s+d[eé]sabonner|darse\s+de\s+baja)\b/i
+
+const HTML_ENTITIES: Record<string, string> = {
+  nbsp: ' ',
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  '#39': "'",
+  ndash: '–',
+  mdash: '—',
+  hellip: '…',
+  copy: '©',
+  reg: '®',
+  euro: '€'
+}
+
+export function cleanTextForClassification(text: unknown, html: unknown): string {
+  const plain = typeof text === 'string' && text.trim() ? text : ''
+  const raw = plain || (typeof html === 'string'
+    ? html
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<(head|style|script|noscript|svg|title)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<(br|\/p|\/div|\/li|\/tr|\/h[1-6])\b[^>]*>/gi, '\n')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/&([a-z]+|#\d+|#x[0-9a-f]+);/gi, (_match, entity: string) => {
+        const lower = entity.toLowerCase()
+        if (lower in HTML_ENTITIES) return HTML_ENTITIES[lower]
+        if (lower.startsWith('#x')) {
+          const code = Number.parseInt(lower.slice(2), 16)
+          return Number.isFinite(code) && code >= 32 && code < 0x110000 ? String.fromCodePoint(code) : ' '
+        }
+        if (lower.startsWith('#')) {
+          const code = Number.parseInt(lower.slice(1), 10)
+          return Number.isFinite(code) && code >= 32 && code < 0x110000 ? String.fromCodePoint(code) : ' '
+        }
+        return ' '
+      })
+    : '')
+  return raw
+    .replace(/[\u0000-\u001f\u200b-\u200f\u2028-\u202f\ufeff\u034f\u00ad]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function buildClassificationInput(
+  message: DatasetRecord,
+  sender: string,
+  senderContact?: Record<string, unknown>
+): string {
+  const from = String(message.from ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 1024)
+  const subject = String(message.subject ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 2048)
+  const to = String(message.to ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 512)
+  const replyTo = typeof message.replyTo === 'string' ? message.replyTo.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 512) : ''
+  const body = cleanTextForClassification(message.text, message.html).slice(0, 16000)
+  const at = sender.lastIndexOf('@')
+  const localPart = at > 0 ? sender.slice(0, at) : ''
+  const senderDomain = at > 0 ? sender.slice(at + 1) : ''
+  const hasUnsubscribe = UNSUBSCRIBE_HINT.test(body) || (typeof message.html === 'string' && UNSUBSCRIBE_HINT.test(message.html))
+  const automatedSender = Boolean(localPart && AUTOMATED_LOCAL_PART.test(localPart))
+
+  return JSON.stringify({
+    sender: from,
+    ...(senderDomain ? { senderDomain } : {}),
+    ...(replyTo && senderAddress(replyTo) !== sender ? { replyTo } : {}),
+    ...(to ? { to } : {}),
+    subject,
+    hasAttachments: message.hasAttachments === true,
+    signals: {
+      automatedSender,
+      hasUnsubscribe
+    },
+    senderContact: senderContact ?? { known: false },
+    body
+  })
+}
+
+export function createClassificationQueue(
+  api: ValleyPluginApi,
+  smartGroups: SmartGroupsStore,
+  publish: (state: ClassificationProgress) => void,
+  refresh: () => Promise<void>,
+  vcf?: VcfContactsStore
+) {
   const jobs = api.data.dataset('classification_jobs'), assignments = api.data.dataset('assignments'), messages = api.data.dataset('messages')
   const active = new Map<string, Promise<void>>()
   const requests = new Map<string, string>()
@@ -24,20 +112,43 @@ export function createClassificationQueue(api: ValleyPluginApi, smartGroups: Sma
     const settings = smartGroups.get(), account = settings.accounts[accountId]
     const groups = settings.enabled ? account?.groups ?? [] : []
     const model = groups.length ? await resolveClassifierModel(api, settings) : undefined
-    const revision = groups.length ? await accountRevision(model, account!) : 'inactive'
+    const revision = groups.length ? await accountRevision(model, account!, settings.multiGroup) : 'inactive'
     const key = { id: `${configurationKey}:${accountId}` }
     const current = await assignments.read(key)
     if (current.value?.configurationRevision !== revision) {
-      try { await assignments.upsert({ ...key, categoryId: null, manual: false, contentRevision: null, configurationRevision: revision, revision: Number(current.value?.revision ?? 0) + 1 }, { expected: [{ dataset: 'assignments', key, revision: current.revision }] }) }
+      try { await assignments.upsert({ ...key, categoryId: null, categoryIds: null, manual: false, contentRevision: null, configurationRevision: revision, revision: Number(current.value?.revision ?? 0) + 1 }, { expected: [{ dataset: 'assignments', key, revision: current.revision }] }) }
       catch (reason) { if ((reason as { code?: string }).code !== 'conflict' || (await assignments.get(key))?.configurationRevision !== revision) throw reason }
     }
-    return { groups, model, revision, usable: groups.length > 0 && (Boolean(model) || hasRules(groups)), marker: await assignments.read(key), key }
+    return { groups, model, multiGroup: settings.multiGroup, revision, usable: groups.length > 0 && (Boolean(model) || hasRules(groups)), marker: await assignments.read(key), key }
   }
-  const contactIds = async (sender: string): Promise<Set<string>> => {
+  const resolveSenderInfo = async (sender: string): Promise<{ contactIds: Set<string>; aiContact?: Record<string, unknown> }> => {
+    const ids = new Set<string>()
+    let aiContact: Record<string, unknown> | undefined
+    if (!sender) return { contactIds: ids }
+    if (vcf) {
+      await vcf.ready()
+      const vcfMatches = vcf.resolveEmail(sender)
+      for (const contact of vcfMatches) ids.add(contact.id)
+      aiContact = formatVcfContactForAi(vcfMatches, sender)
+    }
     const provider = api.interop.services.providers(CONTACTS_DIRECTORY_V1)[0]
-    if (!provider || !sender) return new Set()
-    const response = await provider.invoke('resolveEmails', [[sender]])
-    return new Set(response.ok ? (response.value as { contacts: { id: string }[] }[]).flatMap(entry => entry.contacts.map(contact => contact.id)) : [])
+    if (provider) {
+      const response = await provider.invoke('resolveEmails', [[sender]]).catch(() => ({ ok: false as const }))
+      if (response.ok) {
+        const entries = (response.value as { contacts: ContactDirectoryEntry[] }[]).flatMap(entry => entry.contacts)
+        for (const contact of entries) ids.add(contact.id)
+        if (!aiContact && entries.length) {
+          const first = entries[0]
+          const matchedEmail = first.emails.find((email) => email.address.trim().toLowerCase() === sender)
+          aiContact = {
+            known: true,
+            name: first.displayName,
+            ...(matchedEmail?.label ? { emailLabel: matchedEmail.label } : {})
+          }
+        }
+      }
+    }
+    return { contactIds: ids, aiContact }
   }
   const report = async () => {
     if (disposed) return
@@ -47,7 +158,7 @@ export function createClassificationQueue(api: ValleyPluginApi, smartGroups: Sma
   }
   const project = async (id: string) => {
     const assignment = await assignments.get({ id })
-    if (await messages.get({ id })) await messages.update({ id }, { categoryId: assignment?.categoryId ?? null })
+    if (await messages.get({ id })) await messages.update({ id }, messageCategoryProjection(assignment))
     await refresh()
   }
   const schedule = (at: number) => {
@@ -69,11 +180,15 @@ export function createClassificationQueue(api: ValleyPluginApi, smartGroups: Sma
       await jobs.update({ id }, { status: 'running', requestId, error: null, startedAt: new Date().toISOString() }, { expected: [{ dataset: 'classification_jobs', key: { id }, revision: claimed.revision }] })
       ownsJob = true; requests.set(id, requestId)
       const sender = senderAddress(String(message.from ?? ''))
-      const body = String(message.text ?? String(message.html ?? '').replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim()
-      const input = JSON.stringify({ sender: String(message.from).slice(0, 1024), subject: String(message.subject).slice(0, 2048), body: body.replace(/[\u0000-\u001f]/g, ' ').slice(0, 32000) })
+      const { contactIds, aiContact } = await resolveSenderInfo(sender)
+      const input = buildClassificationInput(message, sender, aiContact)
       const model = config.model
-      const result = await decideSmartGroup(config.groups, { sender, contactIds: usesContacts(config.groups) ? await contactIds(sender) : new Set() },
-        model ? categories => api.ai.classify({ ...model, requestId, input, categories }) : undefined)
+      const result = await decideSmartGroup(
+        config.groups,
+        { sender, contactIds },
+        model ? categories => api.ai.classify({ ...model, requestId, input, categories }) : undefined,
+        { multiGroup: config.multiGroup, maxGroups: MAX_GROUPS_PER_MESSAGE }
+      )
       if (disposed || stopped) { await jobs.update({ id }, { status: 'cancelled' }); return }
       if (result.status === 'paused') {
         paused = result.reason
@@ -85,8 +200,9 @@ export function createClassificationQueue(api: ValleyPluginApi, smartGroups: Sma
       const currentJob = await jobs.read({ id })
       const currentMessage = await messages.get({ id: messageId })
       if (currentJob.value?.status !== 'running' || currentJob.value.requestId !== requestId || currentMessage?.contentRevision !== job.contentRevision) return
+      const assignedIds = normalizeCategoryIds(result.categoryIds, result.categoryId)
       await api.data.transaction([
-        { operation: 'upsert', dataset: 'assignments', values: { id: messageId, categoryId: result.categoryId, confidence: result.confidence, source: result.source, bestCategoryId: result.best?.categoryId ?? null, bestConfidence: result.best?.confidence ?? null, manual: false, contentRevision: job.contentRevision, configurationRevision: config.revision, revision: Number(assignment.value?.revision ?? 0) + 1 } },
+        { operation: 'upsert', dataset: 'assignments', values: { id: messageId, categoryId: assignedIds[0] ?? null, categoryIds: assignedIds.length ? assignedIds : null, confidence: result.confidence, source: result.source, bestCategoryId: result.best?.categoryId ?? null, bestConfidence: result.best?.confidence ?? null, manual: false, contentRevision: job.contentRevision, configurationRevision: config.revision, revision: Number(assignment.value?.revision ?? 0) + 1 } },
         { operation: 'update', dataset: 'classification_jobs', key: { id }, values: { status: 'completed', requestId: null } }
       ], { expected: [{ dataset: 'classification_jobs', key: { id }, revision: currentJob.revision }, { dataset: 'assignments', key: { id: messageId }, revision: assignment.revision }, { dataset: 'assignments', key: config.key, revision: config.marker.revision }] })
       await project(messageId)
@@ -154,12 +270,89 @@ export function createClassificationQueue(api: ValleyPluginApi, smartGroups: Sma
     }
     stopped = false; void pump()
   })
-  const assign = (id: string, categoryId: string | null, manual = true) => serialize(async () => {
+  const enqueueAccount = async (accountId: string, scope: AccountClassificationScope): Promise<number> => {
+    if (disposed) return 0
+    await smartGroups.ready
+    if (!smartGroups.get().enabled) return 0
+    const config = await serialize(() => configuration(accountId))
+    if (!config.usable) return 0
+    const collected: { id: string; contentRevision: string }[] = []
+    let cursor: string | undefined
+    const where: DatasetWhere = {
+      accountId,
+      isSpam: false,
+      ...(scope !== 'reclassify' ? { categoryId: { isNull: true } } : {}),
+      ...(scope === 'inbox-ungrouped'
+        ? { exists: { dataset: 'folder_messages', on: { id: 'messageId', accountId: 'accountId' }, where: { folder: 'INBOX', excluded: false, spam: false } } }
+        : { exists: { dataset: 'folder_messages', on: { id: 'messageId', accountId: 'accountId' }, where: { excluded: false, spam: false } } })
+    }
+    while (collected.length < 2000) {
+      const page = await messages.query({
+        where,
+        select: ['id', 'contentRevision'],
+        orderBy: [{ field: 'sortDate', direction: 'desc' }],
+        limit: Math.min(200, 2000 - collected.length),
+        cursor
+      })
+      for (const row of page.rows) {
+        if (typeof row.id === 'string' && typeof row.contentRevision === 'string' && row.id.startsWith('v1:')) {
+          collected.push({ id: row.id, contentRevision: row.contentRevision })
+        }
+      }
+      cursor = page.cursor
+      if (!cursor || !page.rows.length) break
+    }
+    if (!collected.length) return 0
+    // Exclude messages the user assigned manually so regrouping never overwrites manual picks.
+    const manualIds = new Set<string>()
+    for (let offset = 0; offset < collected.length; offset += 200) {
+      const batch = collected.slice(offset, offset + 200).map((item) => item.id)
+      const manual = await assignments.query({ where: { id: { in: batch }, manual: true }, select: ['id'], limit: 200 })
+      for (const row of manual.rows) if (typeof row.id === 'string') manualIds.add(row.id)
+    }
+    const eligible = collected.filter((item) => !manualIds.has(item.id))
+    if (!eligible.length) return 0
+    if (scope === 'reclassify') {
+      await serialize(async () => {
+        const expectedJobIds = await Promise.all(
+          eligible.map((item) => digest(JSON.stringify([item.id, item.contentRevision, config.revision])))
+        )
+        for (let offset = 0; offset < expectedJobIds.length; offset += 200) {
+          const batch = expectedJobIds.slice(offset, offset + 200)
+          const existing = await jobs.query({ where: { id: { in: batch }, status: { notIn: ['running', 'queued'] } }, select: ['id'], limit: 200 })
+          if (existing.rows.length) {
+            await jobs.updateMany(existing.rows.map((row) => ({ key: { id: String(row.id) }, values: { status: 'queued', error: null, requestId: null } })))
+          }
+        }
+      })
+    }
+    paused = undefined
+    error = undefined
+    stopped = false
+    await enqueue(eligible.map((item) => item.id), false)
+    void pump()
+    return eligible.length
+  }
+  const assignCategories = (id: string, categoryIds: string[], manual = true) => serialize(async () => {
     const current = await assignments.read({ id })
     const message = await messages.get({ id })
-    await assignments.upsert({ id, categoryId, manual, confidence: null, source: manual ? 'manual' : null, bestCategoryId: null, bestConfidence: null, contentRevision: message?.contentRevision ?? null, configurationRevision: null, revision: Number(current.value?.revision ?? 0) + 1 })
+    const clean = normalizeCategoryIds(categoryIds)
+    await assignments.upsert({
+      id,
+      categoryId: clean[0] ?? null,
+      categoryIds: clean.length ? clean : null,
+      manual,
+      confidence: null,
+      source: manual ? 'manual' : null,
+      bestCategoryId: null,
+      bestConfidence: null,
+      contentRevision: message?.contentRevision ?? null,
+      configurationRevision: null,
+      revision: Number(current.value?.revision ?? 0) + 1
+    })
     await project(id)
   })
+  const assign = (id: string, categoryId: string | null, manual = true) => assignCategories(id, categoryId ? [categoryId] : [], manual)
   const recover = async () => {
     for (;;) {
       const page = await jobs.query({ where: { status: 'running', or: [{ startedAt: { isNull: true } }, { startedAt: { lt: new Date(Date.now() - 900000).toISOString() } }] }, limit: 100 })
@@ -175,13 +368,53 @@ export function createClassificationQueue(api: ValleyPluginApi, smartGroups: Sma
   const groupIds = (config: SmartGroupsConfig): Map<string, Set<string>> => new Map(Object.entries(config.accounts).map(([accountId, account]) => [accountId, new Set((account?.groups ?? []).flatMap(descendantIds))]))
   let known: Map<string, Set<string>> | undefined
   const forget = (accountId: string, removed: string[]) => serialize(async () => {
+    const removedSet = new Set(removed)
+    const where: DatasetWhere = {
+      accountId,
+      or: [
+        { categoryId: { in: removed } },
+        ...removed.slice(0, 100).map((id) => ({ categoryKeys: { contains: `|${id}|` } }))
+      ]
+    }
     for (;;) {
-      const page = await messages.query({ where: { accountId, categoryId: { in: removed } }, select: ['id'], limit: 200 })
-      const rows = page.rows.length ? page.rows : []
-      const stale = (await assignments.query({ where: { id: { in: rows.map(row => String(row.id)) }, categoryId: { in: removed } }, limit: 200 })).rows
-      for (const row of stale) await assignments.upsert({ ...row, categoryId: null, manual: false, confidence: null, source: null, bestCategoryId: null, bestConfidence: null, configurationRevision: null, revision: Number(row.revision ?? 0) + 1 })
-      if (rows.length) await messages.updateMany(rows.map(row => ({ key: { id: String(row.id) }, values: { categoryId: null } })))
-      if (page.rows.length < 200) break
+      const page = await messages.query({ where, select: ['id', 'categoryId', 'categoryIds'], limit: 200 })
+      const rows = page.rows
+      if (!rows.length) break
+      const ids = rows.map((row) => String(row.id))
+      const existingAssignments = new Map((await assignments.query({ where: { id: { in: ids } }, limit: 200 })).rows.map((row) => [String(row.id), row]))
+      const messageUpdates: { key: { id: string }; values: ReturnType<typeof messageCategoryProjection> }[] = []
+      for (const row of rows) {
+        const id = String(row.id)
+        const assignmentRow = existingAssignments.get(id)
+        const currentIds = normalizeCategoryIds(assignmentRow?.categoryIds ?? row.categoryIds, assignmentRow?.categoryId ?? row.categoryId)
+        const remaining = currentIds.filter((groupId) => !removedSet.has(groupId))
+        if (assignmentRow) {
+          if (remaining.length) {
+            await assignments.upsert({
+              ...assignmentRow,
+              categoryId: remaining[0],
+              categoryIds: remaining,
+              revision: Number(assignmentRow.revision ?? 0) + 1
+            })
+          } else {
+            await assignments.upsert({
+              ...assignmentRow,
+              categoryId: null,
+              categoryIds: null,
+              manual: false,
+              confidence: null,
+              source: null,
+              bestCategoryId: null,
+              bestConfidence: null,
+              configurationRevision: null,
+              revision: Number(assignmentRow.revision ?? 0) + 1
+            })
+          }
+        }
+        messageUpdates.push({ key: { id }, values: messageCategoryProjection({ categoryIds: remaining }) })
+      }
+      if (messageUpdates.length) await messages.updateMany(messageUpdates)
+      if (rows.length < 200) break
     }
     if (!disposed) await refresh()
   })
@@ -201,7 +434,7 @@ export function createClassificationQueue(api: ValleyPluginApi, smartGroups: Sma
   watchGroups()
   const offGroups = smartGroups.subscribe(watchGroups)
   return {
-    enqueue, assign,
+    enqueue, enqueueAccount, assign, assignCategories,
     reset: async (id: string) => { await assign(id, null, false); const stale = await jobs.query({ where: { messageId: id, status: { notIn: ['running', 'queued'] } }, limit: 1000 }); if (stale.rows.length) await jobs.updateMany(stale.rows.map(row => ({ key: { id: String(row.id) }, values: { status: 'queued', error: null } }))); await enqueue([id]); void pump() },
     retry: () => { paused = undefined; error = undefined; stopped = false; if (timer) clearTimeout(timer); void pump() },
     cancel: async () => {

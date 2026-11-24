@@ -172,4 +172,26 @@ describe('Email Settings', () => {
     expect(remove).not.toHaveBeenCalled()
     dispose()
   })
+
+  it('edits the Contacts .vcf folder and sync limits on the main Email settings page', async () => {
+    const mock = createMockValleyApi({ manifest: { id: 'email' } })
+    const dispose = register(mock.api)
+    render(<Settings />)
+
+    const folder = screen.getByRole('textbox', { name: 'Contacts folder' })
+    fireEvent.change(folder, { target: { value: '.archive/contacts' } })
+    fireEvent.blur(folder)
+    await waitFor(() => expect(mock.api.settings.get().contactsRoot).toBe('.archive/contacts'))
+
+    const perSync = screen.getByRole('spinbutton', { name: 'Messages per sync' })
+    fireEvent.change(perSync, { target: { value: '120' } })
+    fireEvent.blur(perSync)
+    await waitFor(() => expect(mock.api.settings.get().syncLimit).toBe(120))
+
+    const cacheDays = screen.getByRole('spinbutton', { name: 'Keep cached mail for' })
+    fireEvent.change(cacheDays, { target: { value: '90' } })
+    fireEvent.blur(cacheDays)
+    await waitFor(() => expect(mock.api.settings.get().cacheDays).toBe(90))
+    dispose()
+  })
 })

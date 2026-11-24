@@ -166,3 +166,11 @@ export const Filter = (p: IconProps): ReactElement => <Svg {...p}><path d="M4 4h
 export const Tag = (p: IconProps): ReactElement => <Svg {...p}><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z" /><circle cx="7.5" cy="7.5" r="1.5" /></Svg>
 
 export const Star = (p: IconProps & { filled?: boolean }): ReactElement => <Svg {...p}><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z" fill={p.filled ? 'currentColor' : 'none'} /></Svg>
+
+export const X = (p: IconProps): ReactElement => <Svg {...p}><path d="M18 6 6 18" /><path d="m6 6 12 12" /></Svg>
+
+export const ArrowUp = (p: IconProps): ReactElement => <Svg {...p}><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></Svg>
+
+export const ArrowDown = (p: IconProps): ReactElement => <Svg {...p}><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></Svg>
+
+export const Sparkles = (p: IconProps): ReactElement => <Svg {...p}><path d="M12 3l1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7z" /><path d="M19 3v3M20.5 4.5h-3M5 17v3M6.5 18.5h-3" /></Svg>
